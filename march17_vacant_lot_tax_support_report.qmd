@@ -1,0 +1,288 @@
+---
+title: "Vacant Lot Tax Support"
+subtitle: "Methods, results, discussion, and conclusion from Sacramento 311 indicators"
+author: "Scott Coffin"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    code-fold: false
+execute:
+  echo: false
+  warning: false
+  message: false
+  cache: false
+jupyter: python3
+---
+
+This report reorganizes the March 17 support comment into a methods/results/discussion/conclusion format. It uses outputs created by `hackathon_data/311_analysis.ipynb`, especially the joined checkpoint at `hackathon_data/311_analysis_outputs/step6_full_joined_checkpoint.gpkg` and the exported HTML maps.
+
+```{python}
+#| label: tbl-headline-metrics
+#| tbl-cap: "Headline figures used in the March 17 vacant lot tax support comment."
+from pathlib import Path
+
+import pandas as pd
+import plotly.express as px
+import pyogrio
+
+project_root = Path(".")
+checkpoint_path = project_root / "hackathon_data" / "311_analysis_outputs" / "step6_full_joined_checkpoint.gpkg"
+
+cols = [
+    "CategoryLevel1",
+    "CategoryLevel2",
+    "CategoryName",
+    "DateCreated",
+    "ZIP",
+    "Address",
+    "CrossStreet",
+    "parcel_use_category",
+]
+raw = pyogrio.read_dataframe(checkpoint_path, columns=cols).drop(columns="geometry").copy()
+raw["DateCreated"] = pd.to_datetime(raw["DateCreated"], errors="coerce", utc=True)
+raw["ZIP_clean"] = raw["ZIP"].fillna("").astype(str).str.extract(r"(\d{5})", expand=False).fillna("Unknown")
+raw["parcel_use_category_clean"] = (
+    raw["parcel_use_category"].fillna("Unknown").astype(str).str.strip().replace("", "Unknown")
+)
+
+lvl2 = raw["CategoryLevel2"].fillna("").astype(str)
+name = raw["CategoryName"].fillna("").astype(str)
+raw["indicator_type"] = "Other"
+raw.loc[(lvl2 == "Housing - Boardup") | (name == "Code Enforcement Housing - Boardup"), "indicator_type"] = "Board-up"
+raw.loc[lvl2 == "Abandoned", "indicator_type"] = "Abandoned"
+
+vacancy_df = raw.loc[raw["indicator_type"].isin(["Board-up", "Abandoned"])].copy()
+
+street_from_address = vacancy_df["Address"].fillna("").astype(str).str.upper().str.split(",").str[0]
+street_from_address = street_from_address.str.replace(r"^\s*\d+\s+", "", regex=True).str.strip()
+street_from_cross = vacancy_df["CrossStreet"].fillna("").astype(str).str.upper().str.strip()
+vacancy_df["street_key"] = street_from_address.mask(street_from_address.eq(""), street_from_cross).fillna("UNKNOWN")
+vacancy_df["street_key"] = vacancy_df["street_key"].mask(vacancy_df["street_key"].eq(""), "UNKNOWN")
+
+summary_df = pd.DataFrame(
+    [
+        {"Metric": "311 records in notebook checkpoint", "Value": f"{len(raw):,}", "Basis": "311 notebook output"},
+        {
+            "Metric": "Board-up + abandoned calls",
+            "Value": f"{len(vacancy_df):,}",
+            "Basis": "Recomputed from notebook checkpoint",
+        },
+        {
+            "Metric": "Unique address strings",
+            "Value": f"{vacancy_df['Address'].fillna('').astype(str).str.strip().replace('', pd.NA).nunique():,}",
+            "Basis": "Recomputed from notebook checkpoint",
+        },
+        {
+            "Metric": "Board-up calls",
+            "Value": f"{(vacancy_df['indicator_type'] == 'Board-up').sum():,}",
+            "Basis": "Recomputed from notebook checkpoint",
+        },
+        {
+            "Metric": "Abandoned calls",
+            "Value": f"{(vacancy_df['indicator_type'] == 'Abandoned').sum():,}",
+            "Basis": "Recomputed from notebook checkpoint",
+        },
+        {
+            "Metric": "Vacant or underused parcels",
+            "Value": "28,670",
+            "Basis": "March 17 support comment",
+        },
+        {
+            "Metric": "Assessed land value of those parcels",
+            "Value": "$5.1 billion",
+            "Basis": "March 17 support comment",
+        },
+    ]
+)
+
+summary_df
+```
+
+## Methods
+
+The analysis is built from the `311_analysis.ipynb` workflow. That notebook produced a joined 311 checkpoint with parcel-use context, ZIP codes, addresses, and the exported maps shown below. For this report, the main vacancy-related signal follows the March 17 comment: it combines `Housing - Boardup` complaints with records whose `CategoryLevel2` is `Abandoned`.
+
+The analytical steps are intentionally simple:
+
+- Start with the notebook checkpoint containing 1.5 million-plus 311 records.
+- Filter to board-up and abandoned records to create a likely-vacancy indicator set.
+- Summarize those calls by ZIP code, street corridor, month, and parcel-use category.
+- Use address strings for the unique-address count so cross-street style complaints are not collapsed too aggressively.
+- Pair the 311 findings with the separate parcel review described in the March 17 comment.
+
+One practical note: because `311_analysis.ipynb` was explored interactively, this report rebuilds the summary counts from the saved checkpoint instead of depending on every downstream CSV export.
+
+```{python}
+#| label: fig-indicator-mix
+#| fig-cap: "The March 17 memo's likely vacancy indicators combine board-up and abandoned complaints."
+indicator_counts = (
+    vacancy_df["indicator_type"]
+    .value_counts()
+    .rename_axis("indicator_type")
+    .reset_index(name="count")
+)
+
+indicator_fig = px.bar(
+    indicator_counts,
+    x="indicator_type",
+    y="count",
+    color="indicator_type",
+    text="count",
+    color_discrete_map={"Board-up": "#8c510a", "Abandoned": "#d8b365"},
+)
+indicator_fig.update_layout(
+    showlegend=False,
+    xaxis_title="Indicator type",
+    yaxis_title="Count",
+    template="plotly_white",
+    height=380,
+)
+indicator_fig.update_traces(textposition="outside")
+indicator_fig
+```
+
+## Results
+
+The main pattern is concentration, not even spread. The filtered calls cluster in a limited set of ZIP codes, with 95815 and 95838 clearly leading and 95814 remaining part of the central-city pattern highlighted in the March 17 comment.
+
+```{python}
+#| label: fig-top-zips
+#| fig-cap: "Top ZIP code clusters for board-up and abandoned complaints combined."
+zip_counts = (
+    vacancy_df.loc[vacancy_df["ZIP_clean"].str.fullmatch(r"\d{5}")]
+    .groupby("ZIP_clean")
+    .size()
+    .rename("count")
+    .reset_index()
+    .sort_values("count", ascending=False)
+    .head(10)
+    .sort_values("count")
+)
+
+zip_fig = px.bar(
+    zip_counts,
+    x="count",
+    y="ZIP_clean",
+    orientation="h",
+    text="count",
+    color_discrete_sequence=["#5f0f40"],
+)
+zip_fig.update_layout(
+    showlegend=False,
+    xaxis_title="Calls",
+    yaxis_title="ZIP code",
+    template="plotly_white",
+    height=430,
+)
+zip_fig.update_traces(textposition="outside")
+zip_fig
+```
+
+<iframe
+  src="hackathon_data/311_analysis_outputs/vacancy_zip_annual_avg_choropleth.html"
+  width="100%"
+  height="560"
+  loading="lazy"
+  style="border: 1px solid #d9d9d9; border-radius: 8px;"
+></iframe>
+
+*Interactive notebook output: ZIP-level annual-average choropleth exported by `311_analysis.ipynb`.*
+
+Street-level clustering tells the same story. The heaviest corridors are Broadway, J Street, Freeport Boulevard, Del Paso Boulevard, Stockton Boulevard, and Florin Road, which matches the qualitative emphasis in the March 17 comment.
+
+```{python}
+#| label: fig-top-streets
+#| fig-cap: "Street corridors with the largest number of board-up and abandoned complaints."
+street_counts = (
+    vacancy_df.groupby("street_key")
+    .size()
+    .rename("count")
+    .reset_index()
+    .sort_values("count", ascending=False)
+    .head(15)
+    .sort_values("count")
+)
+
+street_fig = px.bar(
+    street_counts,
+    x="count",
+    y="street_key",
+    orientation="h",
+    text="count",
+    color_discrete_sequence=["#0f4c5c"],
+)
+street_fig.update_layout(
+    showlegend=False,
+    xaxis_title="Calls",
+    yaxis_title="Street corridor",
+    template="plotly_white",
+    height=520,
+)
+street_fig.update_traces(textposition="outside")
+street_fig
+```
+
+The notebook's saved seasonality plot also supports the idea that these complaints recur throughout the year rather than appearing as a one-off burst.
+
+![Saved seasonality output from `311_analysis.ipynb`.](hackathon_data/311_analysis_outputs/vacancy_indicator_month_seasonality.png)
+
+Finally, the map below is useful for showing that boarded-up and abandoned conditions do not appear in isolation. The abandoned-point layer sits on top of a much broader heatmap of blight-related complaints, making the surrounding neighborhood context visible.
+
+<iframe
+  src="hackathon_data/311_analysis_outputs/abandoned_points_blight_heatmap.html"
+  width="100%"
+  height="620"
+  loading="lazy"
+  style="border: 1px solid #d9d9d9; border-radius: 8px;"
+></iframe>
+
+*Interactive notebook output: abandoned-property points overlaid on a blight heatmap.*
+
+## Discussion
+
+The policy significance is not just that Sacramento has a vacancy signal in the 311 data. It is that the signal is spatially concentrated, persistent, and clearly connected to places where people already experience visible neglect. A complaint-driven system can document those harms and help staff respond, but it works after the fact. It does not change the holding incentive that keeps land idle.
+
+The parcel-use mix also matters. The 311 signal is not confined to one land-use type. Residential parcels are the largest group in the joined data, commercial parcels are also substantial, and a smaller share maps directly to vacant land or institutional uses. That supports the March 17 comment's broader argument that the costs of long-term vacancy spill across housing areas, business corridors, and shared neighborhood space.
+
+```{python}
+#| label: fig-parcel-mix
+#| fig-cap: "Parcel-use categories linked to board-up and abandoned complaints in the notebook checkpoint."
+parcel_counts = (
+    vacancy_df["parcel_use_category_clean"]
+    .value_counts()
+    .rename_axis("parcel_use_category")
+    .reset_index(name="count")
+)
+
+parcel_fig = px.bar(
+    parcel_counts,
+    x="count",
+    y="parcel_use_category",
+    orientation="h",
+    text="count",
+    color="parcel_use_category",
+    color_discrete_sequence=px.colors.sequential.Sunset,
+)
+parcel_fig.update_layout(
+    showlegend=False,
+    xaxis_title="Calls",
+    yaxis_title="Parcel-use category",
+    template="plotly_white",
+    height=430,
+)
+parcel_fig.update_traces(textposition="outside")
+parcel_fig
+```
+
+::: {.callout-important}
+Enhanced enforcement is a foundation, not a substitute for incentive change. The March 17 memo's core policy claim follows directly from the evidence above: documenting vacancy is useful, but making long-term land banking more expensive is what changes behavior.
+:::
+
+The separate parcel review referenced in the March 17 support comment pushes the argument further. Roughly 28,670 vacant or underused parcels with about $5.1 billion in assessed land value is too large a stock of idle land to treat as a marginal issue. A flat fee may help with registration, but it is unlikely to be large enough to alter redevelopment timing or speculative holding decisions.
+
+## Conclusion
+
+Taken together, the notebook outputs and the March 17 support comment point in the same direction. Sacramento's vacancy-related complaints are concentrated in identifiable ZIP codes and corridors, they overlap with broader blight patterns, and they affect both residential and commercial environments. The implication is straightforward: stronger monitoring and enforcement should move forward, but the city should also build toward a vacant lot tax that is scaled to matter.
+
+If the city wants that policy to work well, it should keep improving the data infrastructure around parcel size, ownership, use type, and vacancy duration. Better data will sharpen targeting, but the central policy logic is already visible in the current evidence: leaving land idle needs to become more costly than putting it back into use.

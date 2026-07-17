@@ -13,6 +13,7 @@
 # Raw source data (anchored to repo root so it does NOT also swallow maps/data/)
 /data/
 hackathon_data/raw_data/
+hackathon_data/reference_data/parcels/
 
 # Pipeline outputs that can be regenerated.
 # NOTE: git does NOT support inline (end-of-line) comments in .gitignore — a
