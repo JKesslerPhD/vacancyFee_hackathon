@@ -61,7 +61,7 @@ CALLS_GPKG = DATA_DIR / "SacCounty_SalesForce311_calls.gpkg"
 CALLS_LAYER = "SalesForce311"
 PARCELS_GPKG = HACK_DIR / "parcels_simplified.gpkg"
 # Prefer the QC-corrected export (public park/rec-district parcels removed,
-# see hackathon_data/qc_park_exclusion.py) when it's been generated locally.
+# see hackathon_data/qc_vacancy_exclusions.py) when it's been generated locally.
 VACANT_CSV = HACK_DIR / "vacant_parcels_qc.csv"
 if not VACANT_CSV.exists():
     VACANT_CSV = HACK_DIR / "vacant_parcels.csv"

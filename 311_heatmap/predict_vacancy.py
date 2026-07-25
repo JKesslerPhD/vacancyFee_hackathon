@@ -68,7 +68,7 @@ MIN_SUPPORT_PARCELS = 200
 # State of California, "STATE USE-EXEMPT", score 22.3). Government-owned
 # parcels also aren't vacancy-fee targets in the first place (fees apply to
 # private owners), so excluding them isn't just a park-specific patch -- see
-# hackathon_data/qc_park_exclusion.py for the analogous fix to the
+# hackathon_data/qc_vacancy_exclusions.py for the analogous fix to the
 # tier-classified (non-predicted) vacant_parcels set.
 _PUBLIC_OWNER_PATTERN = re.compile(
     r"^CITY OF |^COUNTY OF |^STATE OF CALIFORNIA|^UNITED STATES OF AMERICA"

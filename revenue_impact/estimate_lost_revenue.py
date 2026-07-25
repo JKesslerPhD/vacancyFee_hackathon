@@ -15,7 +15,7 @@ differently -- never sum them into one number:
 Inputs:
     ../hackathon_data/vacant_parcels_qc.csv
         (park-excluded vacant parcel list -- run
-        hackathon_data/qc_park_exclusion.py first if this doesn't exist yet)
+        hackathon_data/qc_vacancy_exclusions.py first if this doesn't exist yet)
     ../ca_property_estimator/results/parcels_market_value_estimated.csv
         (run ca_property_estimator/scripts/export_vacancy_fee_estimates.py first)
     ../maps/data/council_districts.geojson
@@ -58,7 +58,7 @@ COMMERCIAL_USE_PATTERN = re.compile(r"COMMERCIAL|RETAIL")
 
 def load_parcels() -> pd.DataFrame:
     if not VACANT_CSV.exists():
-        raise SystemExit(f"{VACANT_CSV} not found -- run hackathon_data/qc_park_exclusion.py first")
+        raise SystemExit(f"{VACANT_CSV} not found -- run hackathon_data/qc_vacancy_exclusions.py first")
     if not ESTIMATES_CSV.exists():
         raise SystemExit(
             f"{ESTIMATES_CSV} not found -- run "

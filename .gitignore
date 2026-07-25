@@ -12,9 +12,10 @@
 !maps/data/sacramento_county.geojson
 !maps/data/council_districts.geojson
 
-# ...and the small QC audit report (244 rows) is tracked so reviewers can see
-# exactly which parcels qc_park_exclusion.py flagged without regenerating it.
-!hackathon_data/qc_park_exclusion_report.csv
+# ...and the small QC audit report (~1,500 rows) is tracked so reviewers can
+# see exactly which parcels qc_vacancy_exclusions.py flagged, and why,
+# without regenerating it.
+!hackathon_data/qc_exclusion_report.csv
 
 # ...and the small per-district revenue rollup (9 rows) is tracked; the large
 # per-parcel detail (revenue_impact/results/parcel_revenue_estimates.csv)

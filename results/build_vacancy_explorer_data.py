@@ -1,6 +1,6 @@
 """
-Build data for vacancy_explorer.html — census block group vacancy choropleth
-+ council district revenue overlay, City of Sacramento only.
+Build vacancy_explorer.html — census block group vacancy choropleth +
+council district revenue overlay, City of Sacramento only.
 ===============================================================================
 Downloads the Census Bureau's cartographic boundary file for California block
 groups (not committed -- see NOTE below on why block groups, not blocks),
@@ -10,9 +10,15 @@ both block groups and council districts.
 Run after ca_property_estimator/scripts/export_vacancy_fee_estimates.py and
 revenue_impact/estimate_lost_revenue.py.
 
-Outputs (tracked -- small, like the rest of results/map_data/):
-    map_data/block_groups_vacancy.json     -- choropleth: vacant count + revenue per block group
+Outputs (all tracked -- small):
+    map_data/block_groups_vacancy.json      -- choropleth: vacant count + revenue per block group
     map_data/council_districts_revenue.json -- district outlines + revenue, for the overlay
+    vacancy_explorer.html                   -- vacancy_explorer_template.html with both
+                                                JSON files inlined, so the page opens by
+                                                double-click (no server, no CORS issue) and
+                                                is still a single self-contained file to host
+                                                for iframe embedding. Edit the *template*, not
+                                                this file directly -- it's overwritten on every run.
 
 NOTE on granularity: true Census blocks (TABBLOCK20) are far too fine for a
 citywide choropleth -- Sacramento city has on the order of 10-15K of them,
@@ -24,7 +30,6 @@ give a meaningful, fast-loading aggregation instead of a mostly-empty layer.
 
 from __future__ import annotations
 
-import json
 import tempfile
 import urllib.request
 import zipfile
@@ -129,7 +134,7 @@ def assign_choropleth_colors(block_groups: gpd.GeoDataFrame) -> gpd.GeoDataFrame
     return out
 
 
-def write_block_groups_json(block_groups: gpd.GeoDataFrame) -> None:
+def write_block_groups_json(block_groups: gpd.GeoDataFrame) -> str:
     cols = [
         "GEOID", "vacant_count", "commercial_eligible_count", "total_prop13_gap",
         "total_property_tax_uplift", "total_sales_tax_total", "total_sales_tax_city",
@@ -141,9 +146,11 @@ def write_block_groups_json(block_groups: gpd.GeoDataFrame) -> None:
     for col in ("total_prop13_gap", "total_property_tax_uplift", "total_sales_tax_total", "total_sales_tax_city"):
         out[col] = out[col].round(0).astype(int)
 
+    geojson_str = out.to_json(drop_id=True)
     target = MAP_DATA_DIR / "block_groups_vacancy.json"
-    target.write_text(out.to_json(drop_id=True))
+    target.write_text(geojson_str)
     print(f"wrote {target.relative_to(REPO_ROOT)} ({len(out):,} block groups, {target.stat().st_size / 1e3:.0f} KB)")
+    return geojson_str
 
 
 def write_districts_json(districts: gpd.GeoDataFrame, district_summary: pd.DataFrame) -> None:
@@ -166,9 +173,23 @@ def write_districts_json(districts: gpd.GeoDataFrame, district_summary: pd.DataF
                 "total_sales_tax_total", "total_sales_tax_city"):
         out[col] = out[col].round(0).astype(int)
 
+    geojson_str = out.to_json(drop_id=True)
     target = MAP_DATA_DIR / "council_districts_revenue.json"
-    target.write_text(out.to_json(drop_id=True))
+    target.write_text(geojson_str)
     print(f"wrote {target.relative_to(REPO_ROOT)} ({len(out)} districts, {target.stat().st_size / 1e3:.0f} KB)")
+    return geojson_str
+
+
+def write_html(block_groups_json: str, districts_json: str) -> None:
+    template_path = RESULTS_DIR / "vacancy_explorer_template.html"
+    html = template_path.read_text()
+    html = html.replace("/*__BLOCK_GROUPS_JSON__*/ null", block_groups_json)
+    html = html.replace("/*__DISTRICTS_JSON__*/ null", districts_json)
+
+    target = RESULTS_DIR / "vacancy_explorer.html"
+    target.write_text(html)
+    print(f"wrote {target.relative_to(REPO_ROOT)} ({target.stat().st_size / 1e3:.0f} KB, "
+          "data inlined -- opens directly via file://, no server needed)")
 
 
 def main() -> None:
@@ -191,11 +212,13 @@ def main() -> None:
     block_groups = assign_choropleth_colors(block_groups)
 
     MAP_DATA_DIR.mkdir(exist_ok=True)
-    write_block_groups_json(block_groups)
+    block_groups_json = write_block_groups_json(block_groups)
 
     district_summary = pd.read_csv(DISTRICT_SUMMARY_CSV, index_col=0).reset_index(names="council_district")
     district_summary = district_summary[district_summary["council_district"] != "CITYWIDE TOTAL"]
-    write_districts_json(districts, district_summary)
+    districts_json = write_districts_json(districts, district_summary)
+
+    write_html(block_groups_json, districts_json)
 
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@ FIGDIR.mkdir(exist_ok=True)
 # ── 1. Vacant parcel centroids (PII stripped, compact array format) ─────────
 def build_parcel_geojson() -> None:
     # Prefer the QC-corrected export (public park/rec-district parcels
-    # removed, see hackathon_data/qc_park_exclusion.py) when present locally.
+    # removed, see hackathon_data/qc_vacancy_exclusions.py) when present locally.
     vacant_path = ROOT / "hackathon_data" / "vacant_parcels_qc.geojson"
     if not vacant_path.exists():
         vacant_path = ROOT / "hackathon_data" / "vacant_parcels.geojson"
