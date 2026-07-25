@@ -76,7 +76,11 @@ COUNTY_GEOJSON = DATA_DIR / "sacramento_county.geojson"
 # Council districts reprojected to WGS84 by prep_layers.py — the raw 2226
 # shapefile does not reproject reliably onto the 3857 basemap in a layout.
 COUNCIL_GEOJSON = DATA_DIR / "council_districts.geojson"
-VACANT_GEOJSON = PROJECT_ROOT / "hackathon_data" / "vacant_parcels.geojson"
+# Prefer the QC-corrected export (public park/rec-district parcels removed,
+# see hackathon_data/qc_park_exclusion.py) when it's been generated locally.
+VACANT_GEOJSON = PROJECT_ROOT / "hackathon_data" / "vacant_parcels_qc.geojson"
+if not VACANT_GEOJSON.exists():
+    VACANT_GEOJSON = PROJECT_ROOT / "hackathon_data" / "vacant_parcels.geojson"
 OUT_DIR = SCRIPT_DIR / "figures"
 
 # ── Extents (lon/lat, WGS84) ─────────────────────────────────────────────────

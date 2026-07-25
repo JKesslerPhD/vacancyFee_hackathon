@@ -68,6 +68,8 @@ Parcels are classified into three tiers in `vacancy_tier`:
 - **Tier 2: Zero Improvement** (9,151) — $0 improvement value, excluding infrastructure/parks/agriculture/government
 - **Tier 3: Parking/Abandoned** (155) — Parking lots (BFH) and abandoned service stations (BFK)
 
+The Tier 2 park exclusion above isn't actually applied in `build_hackathon_data.py`: publicly-owned park land is tax-exempt so it has $0 improvement value and matches the heuristic anyway. `hackathon_data/qc_park_exclusion.py` is a downstream QC pass — owner-name-matches against known park/recreation-district agencies — that catches 244 such parcels (175 Tier 2, 69 Tier 1) and writes corrected `vacant_parcels_qc.csv`/`.geojson`, which `311_heatmap/` and `maps/` prefer automatically when present. It's a patch on the output, not a fix to the classification script.
+
 ## Key Considerations
 
 - The raw CSV is ~1 GB. Use `chunksize` with pandas or filter columns with `usecols` to avoid memory issues. The trimmed version (`hackathon_data/parcels_trimmed.csv`) is 166 MB and loads faster.

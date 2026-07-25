@@ -28,13 +28,18 @@ FIGDIR.mkdir(exist_ok=True)
 
 # ── 1. Vacant parcel centroids (PII stripped, compact array format) ─────────
 def build_parcel_geojson() -> None:
-    print("Loading vacant_parcels.geojson...")
-    gdf = gpd.read_file(ROOT / "hackathon_data" / "vacant_parcels.geojson")
+    # Prefer the QC-corrected export (public park/rec-district parcels
+    # removed, see hackathon_data/qc_park_exclusion.py) when present locally.
+    vacant_path = ROOT / "hackathon_data" / "vacant_parcels_qc.geojson"
+    if not vacant_path.exists():
+        vacant_path = ROOT / "hackathon_data" / "vacant_parcels.geojson"
+    print(f"Loading {vacant_path.name}...")
+    gdf = gpd.read_file(vacant_path)
     print(f"  {len(gdf):,} vacant parcels")
 
     print("Joining hybrid market estimates...")
     mv = pd.read_csv(
-        ROOT / "parcel_actualValue" / "parcels_market_value_hybrid.csv",
+        ROOT / "ca_property_estimator" / "results" / "parcels_market_value_estimated.csv",
         usecols=["APN", "est_market_value", "prop13_benefit", "estimation_tier"],
         dtype={"APN": str},
     ).drop_duplicates(subset="APN")
@@ -180,7 +185,7 @@ def build_hotspot_summary() -> None:
 def build_prop13_simple() -> None:
     print("Building voter-friendly Prop 13 figure...")
     df = pd.read_csv(
-        ROOT / "parcel_actualValue" / "parcels_market_value_hybrid.csv",
+        ROOT / "ca_property_estimator" / "results" / "parcels_market_value_estimated.csv",
         usecols=["property_type", "VAL_ASSD", "est_market_value"],
     )
     df = df.dropna(subset=["VAL_ASSD", "est_market_value"])

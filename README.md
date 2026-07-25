@@ -22,17 +22,17 @@ hackathon_data/  ── trimmed CSV/GeoJSON/KML/GPKG + vacancy_tier classificati
         │
         ├──────────────────────────────────────────────────────────┐
         ▼                                                          ▼
-hackathon_data/311_analysis.ipynb                       parcel_actualValue/run_pipeline.py
-◄── PRIMARY ANALYSIS NOTEBOOK                           ◄── market-value estimation pipeline
-  Step 1-2   load 311 calls (SacCounty_SalesForce311_       Estimates market value per parcel
-             calls.gpkg), build a reproducible 50K-row     (CPI-deflated Prop 13 comps, hybrid
-             beta subset for fast iteration                method), compares against assessed
-  Step 3-7   clean data, join council districts +          value and an outside QC valuation,
-             parcel attributes, engineer "likely            exports figures + a market-value
-             vacancy indicator" flags (board-up,            shapefile.
-             abandoned)
-  Step 8-14  interactive maps (Folium), ZIP/street-
-             level rankings, seasonality, category
+hackathon_data/311_analysis.ipynb                       ca_property_estimator/
+◄── PRIMARY ANALYSIS NOTEBOOK                           ◄── market-value estimation (statewide CARB
+  Step 1-2   load 311 calls (SacCounty_SalesForce311_       AB 2446 model, scoped to Sacramento).
+             calls.gpkg), build a reproducible 50K-row     Trained against the CARB Snowflake
+             beta subset for fast iteration                warehouse (not run from this repo); this
+  Step 3-7   clean data, join council districts +          repo runs scripts/export_vacancy_fee_
+             parcel attributes, engineer "likely            estimates.py against the pre-scored
+             vacancy indicator" flags (board-up,            statewide parquet to produce Sacramento
+             abandoned)                                    market-value estimates. Replaces the
+  Step 8-14  interactive maps (Folium), ZIP/street-        retired parcel_actualValue/ comp-based
+             level rankings, seasonality, category         pipeline.
              correlation analysis
   Step 15    binomial GLM: which 311 categories
              predict high-likelihood vacancy
@@ -78,6 +78,7 @@ The notebook is the source of truth for the 311/vacancy analysis; downstream art
 | Path | What it is |
 |---|---|
 | `hackathon_data/311_analysis.ipynb` | **Primary analysis notebook.** 311 calls × parcels × council districts → vacancy indicators, maps, GLM. |
+| `hackathon_data/qc_park_exclusion.py` | QC pass: flags parcels owned by public park/recreation agencies that slipped into `vacant_parcels.csv`/`.geojson`; writes corrected `*_qc` exports plus `qc_park_exclusion_report.csv`. See "Known gap" below. |
 | `hackathon_data/311_analysis_outputs/` | Notebook outputs: checkpoint GeoPackage, correlation CSVs/heatmaps, ZIP/street/time-series charts, Folium HTML maps, GLM interpretation. |
 | `hackathon_data/reference_data/` | Council district shapefile and a parcel reference extract used as notebook join inputs. |
 | `hackathon_data/starter_notebook.ipynb` | Simplified notebook for the hackathon's "Interactive Dashboard" track (loads data, basic maps/fee calcs). |
@@ -86,7 +87,7 @@ The notebook is the source of truth for the 311/vacancy analysis; downstream art
 | `hackathon_data/DATA_DOWNLOAD.md` | Google Drive links for the large hackathon data files (too big for git). |
 | `311_heatmap/` | Vacancy × 311 synthesis (`vacancy_311_synthesis.py`, `predict_vacancy.py`, `correlation_analysis.py`) with the narrative writeup in `NARRATIVE.md`, signal reference in `ANALYSIS_NOTES.md`, and headline numbers in `findings.json`. Source of `public_comment_vacant_property_enforcement.txt`. |
 | `maps/` | pyQGIS presentation map suite (`render_maps.py`, `prep_layers.py`) — county/midtown PNGs of 311 density, vacant parcels by tier, and the 311×vacancy synthesis; see `maps/README.md`. |
-| `parcel_actualValue/` | Market-value estimation pipeline (`run_pipeline.py` runs estimate → hybrid estimate → visualize → QC comparisons → shapefile export) with CPI/Prop 13 deflator data and an external QC valuation cross-check. |
+| `ca_property_estimator/` | Market-value estimation. Model training (`src/`) runs against the CARB AB 2446 program's Snowflake warehouse, not from this repo; `scripts/export_vacancy_fee_estimates.py` scopes the pre-scored statewide output to Sacramento and reshapes it for `results/build_map_data.py`. See `ca_property_estimator/README.md`. Replaces the retired `parcel_actualValue/` comp-based pipeline. |
 | `results/` | **"The Vacant Equity Gap"** — the public-facing static site (`index.html`, `map.js`, `map_data/`) bundling headline figures and an interactive map for distribution off this repo. |
 | `march17_vacant_lot_tax_support_report.qmd` / `.html` | **Standalone report artifact.** Methods/Results/Discussion/Conclusion writeup built from the notebook's checkpoint, for the March 17 Law & Legislation Committee hearing. |
 | `Resources/` | Source material for the March 17 hearing: the county's own program discussion memo (PDF), the submitted public comment, and committee responses. |
@@ -108,7 +109,11 @@ Parcels are tagged into three tiers (`vacancy_tier` column) — see `CLAUDE.md` 
 
 `maps/` and `311_heatmap/` deliberately exclude Tier 2 from map output (only Tier 1 + Tier 3 shown) and avoid the term "blight" in favor of "health & safety / nuisance" — see `311_heatmap/NARRATIVE.md` for the reasoning.
 
+### Known gap: public park land slips through both tiers
+
+The "excluding ... parks" exclusion above isn't actually applied upstream in `build_hackathon_data.py` (not in this repo). Publicly-owned park land is tax-exempt, so it carries $0 improvement value and matches Tier 2 exactly like a genuinely vacant lot; undeveloped park/open-space parcels can also carry a Tier-1 "I" land use code. `hackathon_data/qc_park_exclusion.py` is a downstream QC pass that owner-name-matches against known public park/recreation agencies (special recreation & park districts, CA State Parks) and found **244 parcels** across 20+ agencies (Southgate, Cordova, Sunrise, Fair Oaks, North Highlands, Orangevale, CA Dept of Parks & Recreation, etc.) miscoded as vacant — 175 in Tier 2, 69 in Tier 1. Run it to regenerate `vacant_parcels_qc.csv`/`.geojson`; `311_heatmap/` and `maps/` pick the corrected files up automatically when present. See `hackathon_data/qc_park_exclusion_report.csv` for the full flagged list. This is a patch on the output, not a fix to `build_hackathon_data.py` itself — that script should exclude these owners at the source.
+
 ## Status
 
-- **Done:** vacancy-tier parcel classification; hackathon data exports (CSV/GeoJSON/KML/GPKG); the March 17, 2026 committee hearing and submitted written comment (`Resources/march17_vacant_lot_tax_support_comment.md`, committee responses in `Resources/march17_committee_responses.md`); the `311_analysis.ipynb` pipeline through GLM + exported outputs; the standalone `.qmd` report (rendered `.html` checked in); the `311_heatmap/` vacancy×311 synthesis and prediction model; the `maps/` pyQGIS presentation suite; the `parcel_actualValue/` market-value pipeline with QC cross-checks; and the `results/` public-facing site.
-- **Not yet started / open:** no single automated pipeline ties `hackathon_data/311_analysis.ipynb` → `311_heatmap/` → `maps/` → `results/` together — each stage currently expects the previous stage's outputs to already exist and be re-run manually when upstream data changes.
+- **Done:** vacancy-tier parcel classification; hackathon data exports (CSV/GeoJSON/KML/GPKG); the March 17, 2026 committee hearing and submitted written comment (`Resources/march17_vacant_lot_tax_support_comment.md`, committee responses in `Resources/march17_committee_responses.md`); the `311_analysis.ipynb` pipeline through GLM + exported outputs; the standalone `.qmd` report (rendered `.html` checked in); the `311_heatmap/` vacancy×311 synthesis and prediction model; the `maps/` pyQGIS presentation suite; the `ca_property_estimator/` market-value pipeline (replacing the retired `parcel_actualValue/`); and the `results/` public-facing site.
+- **Not yet started / open:** no single automated pipeline ties `hackathon_data/311_analysis.ipynb` → `311_heatmap/` → `maps/` → `results/` together — each stage currently expects the previous stage's outputs to already exist and be re-run manually when upstream data changes. `ca_property_estimator`'s vacant-land estimates include a handful of implausibly low values relative to assessed value for large/unusual parcels (see PR discussion) — worth a follow-up sanity-cap pass like the retired pipeline had.

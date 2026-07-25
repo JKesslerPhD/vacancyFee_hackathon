@@ -1,0 +1,74 @@
+# =============================================================
+# California Property Estimator — Configuration
+# =============================================================
+# Copy this file to config.yaml and fill in your credentials.
+# NEVER commit config.yaml to version control.
+# =============================================================
+
+snowflake:
+  account: "your_account"                    # e.g. BMIGXHC-SJA77636
+  user: "your_username"
+  # Choose ONE authentication method:
+  # Option A: Password
+  # password: "your_password"
+  # Option B: External browser (SSO) — opens browser for login
+  authenticator: "externalbrowser"
+  warehouse: "BUILDING_CARBON_VWH"                # or leave empty if none
+  database: "BUILDING_CARBON"
+  schema: "PARCEL_DATA_2025Q1"
+  role: "your_role"                          # e.g. BUILDING_CARBON_ADMIN
+
+data:
+  table: "PARCELS_CLEAN_2025Q1"
+  state_filter: "CA"                         # only California
+  sample_size: null                          # null = all rows; set integer to sample
+  min_sale_value: 10000                      # exclude sub-$10k transfers (non-market)
+  max_sale_value: 50000000                   # exclude >$50M (outliers)
+  recent_sale_years: 5                       # properties sold in last N years = training set
+  arms_length_only: true                     # only arms-length transactions
+
+land_comps:
+  h3_levels: ["H3_RES5", "H3_RES7", "H3_RES9"]  # resolutions to evaluate
+  min_comps: 5                               # minimum comps at coarse levels
+  min_comps_fine: 10                          # minimum comps at finest level
+  stratify_by_use_code: true                  # separate land rates by property type
+  auto_select_resolution: true               # pick best H3 level via training fit
+
+model:
+  target: "IMPROVEMENT_VALUE"                 # building value (sale price - land comps)
+  log_transform_target: true                 # model log(price) for better distribution
+  test_size: 0.2
+  cv_folds: 5
+  random_state: 42
+  models_to_run:
+    - lasso
+    - elastic_net
+    - bayesian_ridge
+    - lightgbm
+  
+  # Shrinkage / regularization hyperparameter grids
+  lasso:
+    alpha: [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+  
+  elastic_net:
+    alpha: [0.001, 0.01, 0.1, 1.0, 10.0]
+    l1_ratio: [0.1, 0.3, 0.5, 0.7, 0.9]
+  
+  bayesian_ridge:
+    alpha_1: [1.e-6, 1.e-5, 1.e-4]
+    alpha_2: [1.e-6, 1.e-5, 1.e-4]
+    lambda_1: [1.e-6, 1.e-5, 1.e-4]
+    lambda_2: [1.e-6, 1.e-5, 1.e-4]
+  
+  lightgbm:
+    n_estimators: [500]
+    max_depth: [8]
+    learning_rate: [0.05]
+    num_leaves: [63]
+    min_child_samples: [50]
+
+output:
+  directory: "results"
+  save_predictions: true
+  save_model: true
+  generate_plots: true
