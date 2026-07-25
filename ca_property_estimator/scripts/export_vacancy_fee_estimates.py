@@ -15,7 +15,19 @@ Inputs:
         (statewide scored output — not in git, regenerate via src/score_all.py
         against the CARB Snowflake warehouse, or copy from a teammate)
     ../hackathon_data/parcels_trimmed.csv
-        (Sacramento assessor data — see hackathon_data/DATA_DOWNLOAD.md)
+        (Sacramento assessor data — see hackathon_data/DATA_DOWNLOAD.md.
+        Only needed as a VAL_ASSD fallback -- see below.)
+
+VAL_ASSD source: src/score_all.py now ships VAL_ASSD/_LAND/_IMPRV directly in
+the parquet (previously computed internally but dropped before the final
+write). If you're running against a parquet regenerated after that fix, this
+script uses it straight from the source row -- no join, no APN-format risk.
+Older parquets (like the one currently checked into a teammate's machine,
+generated before the fix) don't have those columns, so this script falls back
+to joining parcels_trimmed.csv by APN in that case, repadding APNs to 14
+digits first (some rows in that CSV lost leading zeros upstream -- see
+CLAUDE.md's APN-format note; skipping the repad silently drops ~40% of
+otherwise-matching rows).
 
 Output:
     results/parcels_market_value_estimated.csv
@@ -28,6 +40,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
@@ -47,6 +60,43 @@ PROPERTY_TYPE_MAP = {
 }
 
 
+def load_estimates() -> pd.DataFrame:
+    """Load the Sacramento slice, with VAL_ASSD from the parquet if present."""
+    schema_cols = set(pq.ParquetFile(ESTIMATES_PARQUET).schema.names)
+    has_assessed = {"VAL_ASSD", "VAL_ASSD_LAND", "VAL_ASSD_IMPRV"} <= schema_cols
+
+    cols = ["PARCEL_APN", "COUNTYNAME", "PROPERTY_TYPE_GROUP", "MODEL_TYPE", "ESTIMATED_VALUE"]
+    if has_assessed:
+        cols += ["VAL_ASSD", "VAL_ASSD_LAND", "VAL_ASSD_IMPRV"]
+
+    print(f"Loading {ESTIMATES_PARQUET.name}...")
+    est = pd.read_parquet(ESTIMATES_PARQUET, columns=cols)
+    est = est[est["COUNTYNAME"] == "SACRAMENTO"].drop(columns=["COUNTYNAME"])
+    est["PARCEL_APN"] = est["PARCEL_APN"].astype(str)
+    est = est.drop_duplicates(subset="PARCEL_APN")
+    print(f"  {len(est):,} Sacramento County parcels scored")
+
+    if has_assessed:
+        print("  VAL_ASSD present in the parquet itself -- using it directly, no join needed")
+        return est
+
+    print(f"  VAL_ASSD not in this parquet (pre-fix export) -- falling back to "
+          f"{PARCELS_TRIMMED_CSV.name} join")
+    if not PARCELS_TRIMMED_CSV.exists():
+        raise SystemExit(
+            f"{PARCELS_TRIMMED_CSV} not found — see hackathon_data/DATA_DOWNLOAD.md"
+        )
+    assessed = pd.read_csv(
+        PARCELS_TRIMMED_CSV,
+        usecols=["PARCEL_APN", "VAL_ASSD"],
+        dtype={"PARCEL_APN": str},
+        low_memory=False,
+    )
+    assessed["PARCEL_APN"] = assessed["PARCEL_APN"].str.zfill(14)
+    assessed = assessed.drop_duplicates(subset="PARCEL_APN")
+    return est.merge(assessed, on="PARCEL_APN", how="left")
+
+
 def main() -> None:
     if not ESTIMATES_PARQUET.exists():
         raise SystemExit(
@@ -54,35 +104,8 @@ def main() -> None:
             "CARB Snowflake warehouse first, or copy the file from a teammate "
             "who has."
         )
-    if not PARCELS_TRIMMED_CSV.exists():
-        raise SystemExit(
-            f"{PARCELS_TRIMMED_CSV} not found — see hackathon_data/DATA_DOWNLOAD.md"
-        )
 
-    print(f"Loading {ESTIMATES_PARQUET.name}...")
-    est = pd.read_parquet(
-        ESTIMATES_PARQUET,
-        columns=["PARCEL_APN", "COUNTYNAME", "PROPERTY_TYPE_GROUP", "MODEL_TYPE", "ESTIMATED_VALUE"],
-    )
-    est = est[est["COUNTYNAME"] == "SACRAMENTO"].drop(columns=["COUNTYNAME"])
-    est["PARCEL_APN"] = est["PARCEL_APN"].astype(str)
-    est = est.drop_duplicates(subset="PARCEL_APN")
-    print(f"  {len(est):,} Sacramento County parcels scored")
-
-    print(f"Loading {PARCELS_TRIMMED_CSV.name} for VAL_ASSD...")
-    assessed = pd.read_csv(
-        PARCELS_TRIMMED_CSV,
-        usecols=["PARCEL_APN", "VAL_ASSD"],
-        dtype={"PARCEL_APN": str},
-        low_memory=False,
-    )
-    # Sacramento APNs are 14 digits; some rows in parcels_trimmed.csv lost
-    # leading zeros upstream (see CLAUDE.md's APN-format note) — repad before
-    # joining or ~40% of otherwise-matching rows silently miss.
-    assessed["PARCEL_APN"] = assessed["PARCEL_APN"].str.zfill(14)
-    assessed = assessed.drop_duplicates(subset="PARCEL_APN")
-
-    df = est.merge(assessed, on="PARCEL_APN", how="left")
+    df = load_estimates()
     matched = df["VAL_ASSD"].notna().sum()
     print(f"  {matched:,}/{len(df):,} matched to an assessed value ({matched / len(df):.1%})")
 

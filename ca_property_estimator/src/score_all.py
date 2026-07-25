@@ -817,13 +817,20 @@ def run_score_all():
     mult_table.to_parquet(out_dir / "multiplier_table.parquet", index=False)
     logger.info("  Saved model artifacts to %s", out_dir)
 
-    # Output columns
+    # Output columns. VAL_ASSD/_LAND/_IMPRV are already loaded into df_all
+    # (used above for training and multiplier computation) -- ship them
+    # alongside the estimates so the output is self-sufficient for an
+    # estimate-vs-assessed comparison without a separate join against a
+    # second cache (which is what scripts/export_sacramento_roi.py had to do
+    # against results/all_parcels_fe.parquet, a cache this script already
+    # has these columns from -- see load_cached_parcels() above).
     out_cols = [
         "PARCEL_APN", "APN_UNFORMATTED", "FIPS_CODE", "COUNTYNAME",
         "SITE_ADDR", "SITE_CITY", "SITE_ZIP",
         "PROPERTY_TYPE_GROUP", "MODEL_TYPE",
         "BUILDING_SQFT", "LOT_SIZE_AREA", "PROPERTY_AGE",
         "ESTIMATED_VALUE", "EST_LAND_VALUE", "EST_IMPROVEMENT_VALUE",
+        "VAL_ASSD", "VAL_ASSD_LAND", "VAL_ASSD_IMPRV",
     ]
     available = [c for c in out_cols if c in df_all.columns]
     df_out = df_all[available].copy()
