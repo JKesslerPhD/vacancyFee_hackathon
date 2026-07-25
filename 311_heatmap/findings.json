@@ -16,5 +16,11 @@
   "temporal_months_covered": 66,
   "annual_hs_calls_on_vacant": 10400,
   "annual_public_cost_vacant_hs_usd": 1300046,
-  "annual_excess_cost_attributable_to_vacancy_usd": 877484
+  "annual_excess_cost_attributable_to_vacancy_usd": 877484,
+  "predict_base_vacancy_rate_pct": 6.0,
+  "predict_n_predictive_categories": 57,
+  "predict_top_signal": "Code Enforcement Business Compliance Weeds",
+  "predict_top_signal_lift": 8.3,
+  "predict_n_candidate_vacancies": 7433,
+  "predict_high_score_precision_pct": 16.0
 }

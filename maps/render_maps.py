@@ -504,6 +504,12 @@ def render_district_map():
 
 
 def main():
+    # On macOS, QGIS_PREFIX_PATH must be the .app bundle root itself (e.g.
+    # ".../QGIS-LTR.app"), NOT "Contents/MacOS" -- QGIS's bundle-aware plugin
+    # path derivation appends "Contents/PlugIns/qgis" unconditionally, so a
+    # MacOS-suffixed prefix silently produces a nonexistent doubled-"Contents"
+    # plugin path with every non-core provider (including "wms", which the
+    # XYZ basemap needs) unregistered and no error raised until layer load.
     QgsApplication.setPrefixPath(os.environ.get("QGIS_PREFIX_PATH", ""), True)
     app = QgsApplication([], False)
     app.initQgis()

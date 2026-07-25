@@ -50,6 +50,28 @@ python 311_heatmap/predict_vacancy.py
 "C:\Program Files\QGIS 3.38.1\bin\python-qgis.bat" maps\render_maps.py
 ```
 
+**On macOS**, `render_maps.py` needs QGIS's own bundled Python (has `qgis.core`
+built in — a `pip install qgis` into your regular interpreter won't work).
+Install the **LTR (3.x)** line, not the latest 4.x: this script uses PyQt5-style
+flat enums (`Qt.AlignLeft`) that PyQt6/Qt6 in QGIS 4.x renamed to nested
+enums (`Qt.AlignmentFlag.AlignLeft`), so it'll crash under 4.x.
+
+```bash
+brew install --cask qgis@ltr        # QGIS-LTR.app, ~3.4 GB
+
+export PYTHONHOME="/Applications/QGIS-LTR.app/Contents/Frameworks"
+export PROJ_DATA="/Applications/QGIS-LTR.app/Contents/Resources/qgis/proj"
+export PROJ_LIB="$PROJ_DATA"
+# Must be the .app bundle root, NOT Contents/MacOS -- QGIS's macOS plugin-path
+# derivation appends "Contents/PlugIns/qgis" unconditionally, so a
+# MacOS-suffixed prefix silently doubles "Contents" and leaves every
+# non-core provider (including "wms", which the XYZ basemap needs)
+# unregistered with no error until the layer fails to load.
+export QGIS_PREFIX_PATH="/Applications/QGIS-LTR.app"
+
+"/Applications/QGIS-LTR.app/Contents/MacOS/python3.12" maps/render_maps.py
+```
+
 Inputs: `data/SacCounty_SalesForce311_calls.gpkg` (on the project Google Drive),
 `hackathon_data/vacant_parcels.geojson`, and the council-district shapefile.
 `prep_layers.py` also fetches the county boundary and reprojects the districts to
