@@ -79,15 +79,18 @@ cityofsacramento.gov's own sales-tax and Measure U pages) — a City
 Auditor's Baseline that we cite directly, unlike the property-tax city-share
 figure above.
 
-## District join
+## District join — City of Sacramento only
 
 Parcels are matched to a council district by point-in-polygon on
-`LATITUDE`/`LONGITUDE` against `maps/data/council_districts.geojson`
-(the 8 current Sacramento city council districts). Parcels outside city
-limits (unincorporated county, or other incorporated cities in the vacant
-parcel set) don't fall in any district polygon and are reported separately
-as "Outside city council districts" — do not drop them silently, since a
-non-trivial share of the vacant-parcel set is unincorporated county land.
+`LATITUDE`/`LONGITUDE` against `maps/data/council_districts.geojson` (the 8
+current Sacramento city council districts). This module is scoped to the
+**City of Sacramento only**: a parcel that doesn't fall inside any of the 8
+district polygons — unincorporated county land, or another incorporated city
+in the countywide vacant-parcel set (Elk Grove, Folsom, Citrus Heights,
+Rancho Cordova, Galt) — is outside city limits and is dropped before any
+totals are computed, not carried through and footnoted. Of the 28,426
+countywide vacant parcels, 8,489 (30%) are within city limits and make up
+this module's entire output.
 
 ## Known limitations
 

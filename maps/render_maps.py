@@ -100,7 +100,8 @@ C_COUNTY = "#2b2d42"            # county boundary
 C_DISTRICT = "#3a0ca3"         # district boundary
 C_VACANT = "#E5484D"            # Tier 1 coded vacant (refined coral-red)
 C_ABANDON = "#0d9488"           # Tier 3 parking / abandoned (teal)
-C_PREDICT = "#b5179e"          # 311-predicted candidates (magenta)
+C_PREDICT = "#b5179e"          # 311-predicted candidates (magenta-purple)
+C_KNOWN_PREDICT = "#c77dff"    # known-vacant context on the predicted map (lighter purple, same family)
 
 # Tier 2 ("Zero Improvement") is deliberately dropped from every map.
 KEPT_TIERS = [
@@ -277,10 +278,16 @@ def _single_fill_layer(uri, props, name, provider="ogr", opacity=1.0,
 
 
 def vacant_context_layer():
-    """Known coded-vacant parcels as a faint slate underlay (Tier 2 excluded)."""
+    """Known coded-vacant parcels as a lighter-purple underlay (Tier 2 excluded).
+
+    Deliberately the same hue family as predicted_layer()'s magenta-purple —
+    two shades of purple read as "two flavors of vacancy" at a glance, where
+    the earlier slate-gray read as "background noise" next to the vivid
+    predicted-vacancy magenta.
+    """
     return _single_fill_layer(
         str(VACANT_GEOJSON),
-        {"color": "148,163,184,80", "outline_style": "no"},
+        {"color": "199,125,255,110", "outline_style": "no"},
         "Known vacant (coded)", opacity=0.9, subset=DROP_TIER2)
 
 

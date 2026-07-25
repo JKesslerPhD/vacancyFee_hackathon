@@ -104,6 +104,14 @@ def compute_revenue(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def assign_council_district(df: pd.DataFrame) -> pd.DataFrame:
+    """Join to a council district and drop everything outside city limits.
+
+    This module is scoped to the City of Sacramento only -- council districts
+    partition the city, not the county, so a parcel matching none of the 8
+    districts is by definition outside city limits (unincorporated county or
+    another incorporated city). Dropped here rather than carried through and
+    footnoted later.
+    """
     districts = gpd.read_file(DISTRICTS_GEOJSON)
     points = gpd.GeoDataFrame(
         df,
@@ -113,11 +121,13 @@ def assign_council_district(df: pd.DataFrame) -> pd.DataFrame:
     joined = gpd.sjoin(points, districts[["DISTNUM", "NAME", "geometry"]], how="left", predicate="within")
     joined = joined.drop(columns=["geometry", "index_right"])
     joined["council_district"] = joined.apply(
-        lambda r: f"District {int(r['DISTNUM'])} ({r['NAME']})" if pd.notna(r["DISTNUM"]) else "Outside city council districts",
+        lambda r: f"District {int(r['DISTNUM'])} ({r['NAME']})" if pd.notna(r["DISTNUM"]) else None,
         axis=1,
     )
-    outside = (joined["council_district"] == "Outside city council districts").sum()
-    print(f"{outside:,} parcels fall outside city council district boundaries (unincorporated county / other cities)")
+    outside = joined["council_district"].isna().sum()
+    joined = joined[joined["council_district"].notna()].copy()
+    print(f"{len(joined):,} vacant parcels within Sacramento city limits "
+          f"({outside:,} county/other-city parcels excluded from this analysis)")
     return joined
 
 
@@ -140,12 +150,7 @@ def summarize_by_district(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def plot_summary(summary: pd.DataFrame) -> None:
-    # City council districts only -- "Outside city council districts" (mostly
-    # unincorporated county) is an order of magnitude larger and would
-    # squash every district bar to a sliver if plotted on the same axis.
-    # It's still in the CSV output and printed summary, just not this chart.
-    outside_total = summary.loc["Outside city council districts", "total_potential_property_tax_uplift"]
-    plot_df = summary.drop(index=["CITYWIDE TOTAL", "Outside city council districts"]).sort_values(
+    plot_df = summary.drop(index="CITYWIDE TOTAL").sort_values(
         "total_potential_property_tax_uplift", ascending=True
     )
 
@@ -163,17 +168,12 @@ def plot_summary(summary: pd.DataFrame) -> None:
     ax1.set_xlabel("$ millions (one-time, contingent on sale/reassessment)")
     ax1.set_title("Potential property tax uplift\nby council district", fontsize=11, loc="left")
 
-    ax2.barh(y, plot_df["total_estimated_annual_sales_tax_total"] / 1e3, color="#c9622b")
+    ax2.barh(y, plot_df["total_estimated_annual_sales_tax_total"] / 1e6, color="#c9622b")
     ax2.set_yticks(y, plot_df.index, fontsize=9)
-    ax2.set_xlabel("$ thousands / year (recurring, commercial-eligible parcels)")
+    ax2.set_xlabel("$ millions / year (recurring, commercial-eligible parcels)")
     ax2.set_title("Estimated annual sales tax lost\nby council district", fontsize=11, loc="left")
 
-    fig.suptitle(
-        f"Excludes {outside_total / 1e6:,.0f}M in unincorporated-county / other-city parcels "
-        "outside the 8 council districts (see district_revenue_summary.csv)",
-        fontsize=9, color="#5a6068", y=0.02,
-    )
-    plt.tight_layout(rect=(0, 0.04, 1, 1))
+    plt.tight_layout()
     FIGURES_DIR.mkdir(exist_ok=True)
     target = FIGURES_DIR / "district_revenue_summary.png"
     plt.savefig(target, dpi=150, bbox_inches="tight", facecolor="#fef9f6")
