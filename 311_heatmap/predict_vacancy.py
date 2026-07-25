@@ -37,6 +37,7 @@ Reuses the loaders (and the APN zero-pad fix) from vacancy_311_synthesis.py.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -57,6 +58,31 @@ PRED_GPKG = SCRIPT_DIR.parent / "maps" / "data" / "predicted_vacancies.gpkg"
 # A category must touch at least this many parcels to earn a weight (avoids a
 # huge lift computed from a handful of parcels).
 MIN_SUPPORT_PARCELS = 200
+
+# Actively-managed public land -- parks, plazas, government buildings -- draws
+# 311 calls (encampments, illegal dumping, code enforcement) *because* it's
+# open, accessible public space, not because it's neglected private property.
+# The signal model conflates the two: before this filter existed, its top-two
+# midtown candidates were Cesar Chavez Plaza (910 I St, City of Sacramento,
+# "PARK, GREENBELT, ETC", score 35.1) and the Capitol grounds (1010 L St,
+# State of California, "STATE USE-EXEMPT", score 22.3). Government-owned
+# parcels also aren't vacancy-fee targets in the first place (fees apply to
+# private owners), so excluding them isn't just a park-specific patch -- see
+# hackathon_data/qc_park_exclusion.py for the analogous fix to the
+# tier-classified (non-predicted) vacant_parcels set.
+_PUBLIC_OWNER_PATTERN = re.compile(
+    r"^CITY OF |^COUNTY OF |^STATE OF CALIFORNIA|^UNITED STATES OF AMERICA"
+    r"|SCHOOL DISTRICT|COMMUNITY SERVICES DISTRICT|IRRIGATION DISTRICT"
+    r"|WATER DISTRICT|FIRE DISTRICT|SEWER DISTRICT"
+    r"|RECREATION.*PARK.*(DISTRICT|DIST)\b|PARK.*RECREATION.*(DISTRICT|DIST)\b"
+)
+_PUBLIC_USE_PATTERN = re.compile(r"PARK, GREENBELT|GREENBELT|USE-EXEMPT")
+
+
+def is_public_land(owner, use_desc) -> bool:
+    owner = owner.upper() if isinstance(owner, str) else ""
+    use_desc = use_desc.upper() if isinstance(use_desc, str) else ""
+    return bool(_PUBLIC_OWNER_PATTERN.search(owner)) or bool(_PUBLIC_USE_PATTERN.search(use_desc))
 
 
 def attribute_with_parcel_id(gpd, calls, parcels):
@@ -185,12 +211,19 @@ def main():
         parcels_idx["is_vacant"] & (parcels_idx["vac_score"] > 0), "vac_score"]
     threshold = float(known_vac_scored.median()) if len(known_vac_scored) else 1.0
 
-    cand_mask = (~parcels_idx["is_vacant"]) & (parcels_idx["vac_score"] >= threshold)
+    is_public = parcels_idx.apply(
+        lambda r: is_public_land(r.get("ASSESSEE_OWNER_NAME_1"), r.get("USE_CODE_MUNI_DESC")), axis=1
+    )
+    n_public_flagged = int(((~parcels_idx["is_vacant"]) & (parcels_idx["vac_score"] >= threshold) & is_public).sum())
+
+    cand_mask = (~parcels_idx["is_vacant"]) & (parcels_idx["vac_score"] >= threshold) & (~is_public)
     candidates = parcels_idx[cand_mask].copy()
+    print(f"  excluded {n_public_flagged:,} public/government-owned parcels "
+          "that scored above threshold (parks, plazas, government buildings)")
 
     # Precision-like sanity check: among ALL parcels scoring >= threshold, what
     # share are already known vacant? (higher = the score tracks real vacancy).
-    scored_hi = parcels_idx[parcels_idx["vac_score"] >= threshold]
+    scored_hi = parcels_idx[(parcels_idx["vac_score"] >= threshold) & (~is_public)]
     precision_proxy = float(scored_hi["is_vacant"].mean()) if len(scored_hi) else 0.0
 
     print(f"  score threshold {threshold:.2f}; "

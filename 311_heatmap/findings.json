@@ -21,6 +21,6 @@
   "predict_n_predictive_categories": 57,
   "predict_top_signal": "Code Enforcement Business Compliance Weeds",
   "predict_top_signal_lift": 8.3,
-  "predict_n_candidate_vacancies": 7433,
-  "predict_high_score_precision_pct": 16.0
+  "predict_n_candidate_vacancies": 6982,
+  "predict_high_score_precision_pct": 15.0
 }
