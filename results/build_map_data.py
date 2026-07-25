@@ -58,8 +58,8 @@ def build_parcel_geojson() -> None:
 
     # Categorize use into a single letter for the legend (R / C / V / O)
     use_map = {"R": "Residential", "C": "Commercial", "V": "Vacant land", "I": "Industrial", "O": "Other"}
-    def use_class(desc: str) -> str:
-        d = (desc or "").upper()
+    def use_class(desc) -> str:
+        d = desc.upper() if isinstance(desc, str) else ""
         if "VAC" in d: return "V"
         if "RES" in d or "SFD" in d or "APT" in d or "DUP" in d: return "R"
         if "COM" in d or "OFFICE" in d or "RETAIL" in d or "STORE" in d: return "C"

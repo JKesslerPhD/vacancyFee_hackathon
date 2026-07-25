@@ -16,6 +16,11 @@
 # exactly which parcels qc_park_exclusion.py flagged without regenerating it.
 !hackathon_data/qc_park_exclusion_report.csv
 
+# ...and the small per-district revenue rollup (9 rows) is tracked; the large
+# per-parcel detail (revenue_impact/results/parcel_revenue_estimates.csv)
+# stays regenerate-locally like everything else derived from vacant_parcels.
+!revenue_impact/results/district_revenue_summary.csv
+
 # Raw source data (anchored to repo root so it does NOT also swallow maps/data/)
 /data/
 hackathon_data/raw_data/
