@@ -1,13 +1,19 @@
 """
-Build vacancy_explorer.html — property-count choropleth (block groups zoomed
-out, census blocks zoomed in) + council district overlay, City of
-Sacramento only.
+Build vacancy_explorer.html — property-count choropleth (City of Sacramento's
+official neighborhoods) + council district overlay, City of Sacramento only.
 ===============================================================================
-Downloads Census Bureau boundary files (not committed), clips to city
-limits, and aggregates revenue_impact's per-parcel output onto three
-geographies: block groups, census blocks, and council districts.
+Reads the City of Sacramento's official Neighborhoods boundary layer (see
+NEIGHBORHOODS_GEOJSON), clips to city limits, and aggregates revenue_impact's
+per-parcel output onto two geographies: neighborhoods and council districts.
 
-Run after ca_property_estimator/scripts/export_vacancy_fee_estimates.py and
+Neighborhoods replaced an earlier census block group / census block design
+(named, publicly-recognized areas people can actually identify beat two tiers
+of anonymous Census geography -- and at 129 features, small enough to inline
+directly with no zoom-dependent lazy layer needed).
+
+Run after ca_property_estimator/results/parcels_market_value_estimated.csv
+exists locally (ca_property_estimator is an external CARB AB 2446 project,
+not part of this repo -- get its output CSV from a teammate) and after
 revenue_impact/estimate_lost_revenue.py.
 
 Choropleth metrics: property count, potential property tax uplift, est.
@@ -23,34 +29,32 @@ vacant land & residential) -- see property_type_group() in
 revenue_impact/estimate_lost_revenue.py -- shown as a breakdown, not a
 technical "commercial-eligible" flag.
 
-Outputs:
-    map_data/block_groups_vacancy.json      -- tracked, inlined into the HTML
-    map_data/council_districts_revenue.json -- tracked, inlined into the HTML
-    map_data/blocks_vacancy.json            -- NOT inlined (see below), fetched
-                                                lazily when the map is zoomed in
-    vacancy_explorer.html                   -- vacancy_explorer_template.html with
-                                                block groups + districts + citywide
-                                                totals inlined, so the core page opens
-                                                by double-click (no server, no CORS
-                                                issue). Edit the *template*, not this
-                                                file directly -- it's overwritten on
-                                                every run.
+Also emits a raw point layer (map_data/vacant_points_heat.json) for the
+optional density-heatmap toggle -- every vacant parcel's lat/lon, unweighted,
+rendered client-side with leaflet.heat (same plugin already used for the
+311-calls layer on the older index.html/map.js map). This sits underneath
+the neighborhood choropleth rather than replacing it: neighborhoods answer
+"which named area has the most/highest-value vacancy," the heatmap answers
+"where do vacant parcels cluster regardless of neighborhood lines" -- e.g.
+corridors that straddle a boundary would get split across two neighborhood
+polygons but still read as one hot patch on the heatmap.
 
-NOTE on why blocks are fetched, not inlined: 7,442 real census blocks (after
-simplification) run ~2.5-3MB of geometry alone -- inlining that would nearly
-triple the page's file size for a layer only visible when zoomed in. Instead
-it's written as its own JSON and fetched on demand once the map is zoomed
-past BLOCK_ZOOM_THRESHOLD (see the template) -- the core experience
-(block-group choropleth, district outlines, callout box) still works
-offline via file://; the block-level zoom layer needs the page served, same
-as it will be once deployed.
+Outputs:
+    map_data/neighborhoods_vacancy.json      -- tracked, inlined into the HTML
+    map_data/council_districts_revenue.json  -- tracked, inlined into the HTML
+    map_data/vacant_points_heat.json         -- tracked, inlined into the HTML
+    vacancy_explorer.html                    -- vacancy_explorer_template.html with
+                                                 neighborhoods + districts + citywide
+                                                 totals + heat points inlined, so the
+                                                 page opens by double-click (no server,
+                                                 no CORS issue). Edit the *template*,
+                                                 not this file directly -- it's
+                                                 overwritten on every run.
 """
 
 from __future__ import annotations
 
-import tempfile
-import urllib.request
-import zipfile
+import json
 from pathlib import Path
 
 import geopandas as gpd
@@ -65,10 +69,12 @@ PARCEL_REVENUE_CSV = REPO_ROOT / "revenue_impact" / "results" / "parcel_revenue_
 DISTRICT_SUMMARY_CSV = REPO_ROOT / "revenue_impact" / "results" / "district_revenue_summary.csv"
 DISTRICTS_GEOJSON = REPO_ROOT / "maps" / "data" / "council_districts.geojson"
 
-CENSUS_BG_URL = "https://www2.census.gov/geo/tiger/GENZ2023/shp/cb_2023_06_bg_500k.zip"
-CENSUS_BLOCKS_URL = "https://www2.census.gov/geo/tiger/TIGER2023/TABBLOCK20/tl_2023_06_tabblock20.zip"
-SACRAMENTO_COUNTY_FIPS = "067"
-BLOCK_SIMPLIFY_TOLERANCE_DEG = 0.00003  # ~3m at this latitude
+# City of Sacramento's official Neighborhoods layer (129 named neighborhoods
+# -- matches the reference map at cityofsacramento.gov/.../Neighborhoods_E.pdf),
+# pulled from data.cityofsacramento.org's ArcGIS Hub open-data API. Saved
+# locally since it changes rarely and the dataset ID is what actually matters
+# for reproducibility: https://data.cityofsacramento.org/datasets/49f20f1612ae4f0a9292eb65f8bd4013_0
+NEIGHBORHOODS_GEOJSON = REPO_ROOT / "maps" / "data" / "sacramento_neighborhoods_raw.geojson"
 
 # 5-step validated sequential blue ramp (dataviz skill, references/palette.md,
 # steps 250/350/450/550/700) -- passes lightness-monotone, adjacent-gap,
@@ -86,32 +92,18 @@ PARCEL_COLS = [
 ]
 
 
-def fetch_block_groups() -> gpd.GeoDataFrame:
-    with tempfile.TemporaryDirectory() as tmp:
-        zip_path = Path(tmp) / "cb_bg.zip"
-        print(f"Downloading {CENSUS_BG_URL} ...")
-        urllib.request.urlretrieve(CENSUS_BG_URL, zip_path)
-        with zipfile.ZipFile(zip_path) as zf:
-            zf.extractall(tmp)
-        shp = next(Path(tmp).glob("*.shp"))
-        bg = gpd.read_file(shp)
-    sac = bg[(bg["STATEFP"] == "06") & (bg["COUNTYFP"] == SACRAMENTO_COUNTY_FIPS)]
-    return sac.rename(columns={"GEOID": "GEOID"}).to_crs("EPSG:4326")
-
-
-def fetch_census_blocks() -> gpd.GeoDataFrame:
-    """Real TABBLOCK20 blocks -- 367MB statewide, no county-scoped download
-    exists, so fetch the whole file and filter locally (one-time per run)."""
-    with tempfile.TemporaryDirectory() as tmp:
-        zip_path = Path(tmp) / "tabblock20.zip"
-        print(f"Downloading {CENSUS_BLOCKS_URL} (statewide, ~350MB -- filtered to Sacramento County after) ...")
-        urllib.request.urlretrieve(CENSUS_BLOCKS_URL, zip_path)
-        with zipfile.ZipFile(zip_path) as zf:
-            zf.extractall(tmp)
-        shp = next(Path(tmp).glob("*.shp"))
-        blk = gpd.read_file(shp, columns=["STATEFP20", "COUNTYFP20", "GEOID20", "geometry"])
-    sac = blk[blk["COUNTYFP20"] == SACRAMENTO_COUNTY_FIPS].rename(columns={"GEOID20": "GEOID"})
-    return sac.to_crs("EPSG:4326")
+def fetch_neighborhoods() -> gpd.GeoDataFrame:
+    """City of Sacramento's official Neighborhoods layer. NAME is unique and
+    already human-readable (e.g. "Alkali Flat"), so it doubles as the join
+    key -- renamed to GEOID purely for reuse of the shared aggregate/finalize
+    helpers below, which were written for Census GEOID-keyed layers."""
+    if not NEIGHBORHOODS_GEOJSON.exists():
+        raise SystemExit(
+            f"{NEIGHBORHOODS_GEOJSON} not found -- fetch it from "
+            "https://data.cityofsacramento.org/datasets/49f20f1612ae4f0a9292eb65f8bd4013_0.geojson"
+        )
+    nbhd = gpd.read_file(NEIGHBORHOODS_GEOJSON)
+    return nbhd.rename(columns={"NAME": "GEOID"}).to_crs("EPSG:4326")
 
 
 def clip_to_city(features: gpd.GeoDataFrame, districts: gpd.GeoDataFrame, label: str) -> gpd.GeoDataFrame:
@@ -214,23 +206,13 @@ def _finalize(areas: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return out
 
 
-def write_block_groups_json(block_groups: gpd.GeoDataFrame) -> str:
-    out = _finalize(block_groups)
+def write_neighborhoods_json(neighborhoods: gpd.GeoDataFrame) -> str:
+    out = _finalize(neighborhoods)
     geojson_str = out.to_json(drop_id=True)
-    target = MAP_DATA_DIR / "block_groups_vacancy.json"
+    target = MAP_DATA_DIR / "neighborhoods_vacancy.json"
     target.write_text(geojson_str)
-    print(f"wrote {target.relative_to(REPO_ROOT)} ({len(out):,} block groups, {target.stat().st_size / 1e3:.0f} KB)")
+    print(f"wrote {target.relative_to(REPO_ROOT)} ({len(out):,} neighborhoods, {target.stat().st_size / 1e3:.0f} KB)")
     return geojson_str
-
-
-def write_blocks_json(blocks: gpd.GeoDataFrame) -> None:
-    simplified = blocks.copy()
-    simplified["geometry"] = simplified.geometry.simplify(BLOCK_SIMPLIFY_TOLERANCE_DEG, preserve_topology=True)
-    out = _finalize(simplified)
-    target = MAP_DATA_DIR / "blocks_vacancy.json"
-    target.write_text(out.to_json(drop_id=True))
-    print(f"wrote {target.relative_to(REPO_ROOT)} ({len(out):,} blocks, {target.stat().st_size / 1e6:.1f} MB) -- "
-          "NOT inlined, fetched lazily on zoom-in")
 
 
 def write_districts_json(districts: gpd.GeoDataFrame, district_summary: pd.DataFrame) -> str:
@@ -299,17 +281,33 @@ def build_citywide_totals(district_summary: pd.DataFrame) -> str:
     return pd.Series(payload).to_json()
 
 
-def write_html(block_groups_json: str, districts_json: str, citywide_json: str) -> None:
+def write_heat_points_json(parcels: pd.DataFrame) -> str:
+    """[lat, lon] per vacant parcel, unweighted -- leaflet.heat derives density
+    purely from point count, so no dollar/tier weighting is applied here (that's
+    what the neighborhood choropleth's metric dropdown is for). Rounded to 5
+    decimals (~1m) since heat rendering doesn't need assessor-grade precision
+    and it keeps the inlined payload small."""
+    pts = parcels[["LATITUDE", "LONGITUDE"]].dropna()
+    points = pts.round(5).values.tolist()
+    target = MAP_DATA_DIR / "vacant_points_heat.json"
+    payload = json.dumps({"points": points})
+    target.write_text(payload)
+    print(f"wrote {target.relative_to(REPO_ROOT)} ({len(points):,} points, {target.stat().st_size / 1e3:.0f} KB)")
+    return payload
+
+
+def write_html(neighborhoods_json: str, districts_json: str, citywide_json: str, heat_json: str) -> None:
     template_path = RESULTS_DIR / "vacancy_explorer_template.html"
     html = template_path.read_text()
-    html = html.replace("/*__BLOCK_GROUPS_JSON__*/ null", block_groups_json)
+    html = html.replace("/*__NEIGHBORHOODS_JSON__*/ null", neighborhoods_json)
     html = html.replace("/*__DISTRICTS_JSON__*/ null", districts_json)
     html = html.replace("/*__CITYWIDE_JSON__*/ null", citywide_json)
+    html = html.replace("/*__HEATPOINTS_JSON__*/ null", heat_json)
 
     target = RESULTS_DIR / "vacancy_explorer.html"
     target.write_text(html)
     print(f"wrote {target.relative_to(REPO_ROOT)} ({target.stat().st_size / 1e3:.0f} KB, "
-          "block groups/districts inlined -- opens directly via file://, no server needed)")
+          "neighborhoods/districts inlined -- opens directly via file://, no server needed)")
 
 
 def main() -> None:
@@ -323,17 +321,11 @@ def main() -> None:
 
     MAP_DATA_DIR.mkdir(exist_ok=True)
 
-    block_groups = fetch_block_groups()
-    block_groups = clip_to_city(block_groups, districts, "block groups")
-    block_groups = aggregate_to_geography(block_groups, parcels)
-    block_groups = assign_choropleth_colors(block_groups)
-    block_groups_json = write_block_groups_json(block_groups)
-
-    blocks = fetch_census_blocks()
-    blocks = clip_to_city(blocks, districts, "census blocks")
-    blocks = aggregate_to_geography(blocks, parcels)
-    blocks = assign_choropleth_colors(blocks)
-    write_blocks_json(blocks)
+    neighborhoods = fetch_neighborhoods()
+    neighborhoods = clip_to_city(neighborhoods, districts, "neighborhoods")
+    neighborhoods = aggregate_to_geography(neighborhoods, parcels)
+    neighborhoods = assign_choropleth_colors(neighborhoods)
+    neighborhoods_json = write_neighborhoods_json(neighborhoods)
 
     revenue_summary = pd.read_csv(DISTRICT_SUMMARY_CSV, index_col=0).reset_index(names="council_district")
     revenue_summary = revenue_summary[revenue_summary["council_district"] != "CITYWIDE TOTAL"]
@@ -342,8 +334,9 @@ def main() -> None:
 
     districts_json = write_districts_json(districts, district_summary)
     citywide_json = build_citywide_totals(district_summary)
+    heat_json = write_heat_points_json(parcels)
 
-    write_html(block_groups_json, districts_json, citywide_json)
+    write_html(neighborhoods_json, districts_json, citywide_json, heat_json)
 
 
 if __name__ == "__main__":

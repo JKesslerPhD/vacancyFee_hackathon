@@ -8,6 +8,7 @@
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
 <style>
   :root {
     color-scheme: light;
@@ -40,7 +41,6 @@
   #panel .toggle-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
   #panel .toggle-row input { margin: 0; }
   #panel .metric-note { font-size: 11px; color: var(--text-secondary); margin-top: 6px; line-height: 1.4; }
-  #panel .zoom-note { font-size: 11px; color: var(--text-secondary); margin-top: 10px; line-height: 1.4; padding-top: 8px; border-top: 1px solid var(--border); }
 
   #callout {
     position: absolute; top: 12px; right: 12px; z-index: 1000;
@@ -87,12 +87,6 @@
     position: absolute; inset: 0; z-index: 2000; display: flex; align-items: center; justify-content: center;
     background: var(--surface-1); color: var(--text-secondary); font-size: 13px;
   }
-  #blockLoading {
-    position: absolute; bottom: 20px; right: 12px; z-index: 1000; display: none;
-    background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
-    padding: 6px 12px; font-size: 11.5px; color: var(--text-secondary);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
-  }
 
   @media (max-width: 720px) {
     #callout { position: static; margin: 12px; max-width: none; }
@@ -123,7 +117,11 @@
       <label for="toggleDistricts" style="margin:0; text-transform:none; letter-spacing:normal; font-size:13px; color:var(--text-primary);">Show council district outlines</label>
     </div>
 
-    <div class="zoom-note">Zoom in for census-block-level detail — most individual blocks have no vacant properties, so this is sparse by design.</div>
+    <div class="toggle-row">
+      <input type="checkbox" id="toggleHeat">
+      <label for="toggleHeat" style="margin:0; text-transform:none; letter-spacing:normal; font-size:13px; color:var(--text-primary);">Show vacancy density heatmap</label>
+    </div>
+    <div class="metric-note">Every vacant parcel, plotted as a density surface underneath the neighborhood shading — reveals corridors that cut across neighborhood lines.</div>
   </div>
 
   <div id="callout">
@@ -148,10 +146,12 @@
     <div class="ramp" id="legendRamp"></div>
     <div class="scale-labels"><span>fewer</span><span>more</span></div>
     <div class="district-line"><span class="district-swatch"></span><span>Council district boundary</span></div>
-    <div class="geo-line" id="geoLine">Showing: block groups</div>
+    <div class="geo-line" id="geoLine">Showing: Sacramento neighborhoods</div>
+    <div class="district-line" id="heatLegendLine" style="display:none;">
+      <span style="width:18px; height:10px; border-radius:3px; background:linear-gradient(90deg, rgba(253,230,138,0) 0%, #fde68a 40%, #eb6834 70%, #9a2f12 100%);"></span>
+      <span>Vacant parcel density</span>
+    </div>
   </div>
-
-  <div id="blockLoading">Loading block-level detail…</div>
 
   <div id="loading">Loading Sacramento data…</div>
 </div>
@@ -159,14 +159,14 @@
 <script>
 (function () {
   // Injected by build_vacancy_explorer_data.py -- see that script's
-  // write_html() for exactly how these placeholders get substituted. Blocks
-  // are NOT inlined (too large -- ~6MB of geometry for a layer only used
-  // when zoomed in); fetched lazily instead, see loadBlocksIfNeeded().
-  const BLOCK_GROUPS_DATA = /*__BLOCK_GROUPS_JSON__*/ null;
+  // write_html() for exactly how these placeholders get substituted.
+  // Neighborhoods (129 of them, City of Sacramento's official layer) are
+  // small enough to inline directly -- no zoom-dependent lazy layer needed,
+  // unlike the census-block approach this replaced.
+  const NEIGHBORHOODS_DATA = /*__NEIGHBORHOODS_JSON__*/ null;
   const DISTRICTS_DATA = /*__DISTRICTS_JSON__*/ null;
   const CITYWIDE_DATA = /*__CITYWIDE_JSON__*/ null;
-  const BLOCKS_URL = "map_data/blocks_vacancy.json";
-  const BLOCK_ZOOM_THRESHOLD = 15;
+  const HEAT_POINTS_DATA = /*__HEATPOINTS_JSON__*/ null;
 
   const RAMP = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#0d366b"];
   const NO_DATA_COLOR = "#e5e3de";
@@ -180,8 +180,10 @@
   function fmtYears(v) { return v.toFixed(1) + " yrs"; }
   function fmtRatio(v) { return v.toFixed(1) + "×"; }
   function typeBreakdown(p) {
+    // "zoned-residential" (not "residential" alone) -- this bucket is
+    // vacant/deficient land zoned residential, not occupied homes.
     return `${p.n_commercial.toLocaleString()} commercial · ${p.n_industrial.toLocaleString()} industrial · `
-      + `${p.n_vacant_land_residential.toLocaleString()} vacant land / residential`;
+      + `${p.n_vacant_land_residential.toLocaleString()} vacant, zoned-residential land`;
   }
 
   const METRICS = {
@@ -203,19 +205,45 @@
     maxZoom: 19,
   }).addTo(map);
 
-  let blockGroupLayer = null;
-  let blockLayer = null;
-  let blocksData = null;
-  let blocksLoading = false;
+  let neighborhoodLayer = null;
   let districtLayer = null;
   let currentMetric = "count";
   let districtsVisible = true;
+  let heatVisible = false;
+
+  // Dedicated pane below Leaflet's default overlayPane (z-index 400) so the
+  // heat layer always renders *underneath* the neighborhood/district
+  // polygons, regardless of add order -- and pointerEvents: none so it
+  // doesn't intercept hover/tooltips meant for the choropleth above it.
+  map.createPane("heatPane");
+  map.getPane("heatPane").style.zIndex = 350;
+  map.getPane("heatPane").style.pointerEvents = "none";
+
+  // Same plugin, same warm gradient (amber -> accent orange -> brick) as the
+  // 311-calls heat layer on the older index.html/map.js map -- unweighted,
+  // one point per vacant parcel, so brightness reflects pure density.
+  const heatLayer = L.heatLayer((HEAT_POINTS_DATA && HEAT_POINTS_DATA.points) || [], {
+    pane: "heatPane",
+    radius: 14,
+    blur: 18,
+    maxZoom: 16,
+    // leaflet.heat's default max=1.0 means a single overlapping point
+    // already reads as full intensity -- with 6,500+ points packed into
+    // city limits that saturates almost the entire map into one dark
+    // blob. A higher max means it takes real clustering to reach full
+    // color, which is what actually reveals corridors vs. background.
+    max: 4,
+    minOpacity: 0.12,
+    gradient: { 0.15: "#fde68a", 0.4: "#f5a25a", 0.65: "#eb6834", 1.0: "#9a2f12" },
+  });
 
   function styleArea(feature) {
     const m = METRICS[currentMetric];
     return {
       fillColor: feature.properties[m.colorProp] || NO_DATA_COLOR,
-      fillOpacity: 0.75,
+      // Dimmed (not hidden) while the heatmap is on, so the heat surface
+      // reads through underneath and the choropleth still gives context.
+      fillOpacity: heatVisible ? 0.35 : 0.75,
       color: "#ffffff",
       weight: 0.5,
       opacity: 0.6,
@@ -269,8 +297,6 @@
       ramp.appendChild(s);
     });
     document.getElementById("metricNote").textContent = m.note;
-    document.getElementById("geoLine").textContent =
-      "Showing: " + (map.getZoom() >= BLOCK_ZOOM_THRESHOLD ? "census blocks" : "block groups");
   }
 
   function renderCallout() {
@@ -283,54 +309,23 @@
   }
 
   function applyMetric() {
-    if (blockGroupLayer) blockGroupLayer.eachLayer((l) => l.setStyle(styleArea(l.feature)));
-    if (blockLayer) blockLayer.eachLayer((l) => l.setStyle(styleArea(l.feature)));
-    renderLegend();
-  }
-
-  function loadBlocksIfNeeded() {
-    if (blocksData || blocksLoading) return;
-    blocksLoading = true;
-    document.getElementById("blockLoading").style.display = "block";
-    fetch(BLOCKS_URL)
-      .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .then((data) => {
-        blocksData = data;
-        blockLayer = L.geoJSON(blocksData, { style: styleArea });
-        bindAreaLayer(blockLayer, () => "Census block");
-        blocksLoading = false;
-        document.getElementById("blockLoading").style.display = "none";
-        updateZoomLayers();
-      })
-      .catch((err) => {
-        blocksLoading = false;
-        document.getElementById("blockLoading").textContent = "Block-level detail needs this page to be hosted (not opened as a file).";
-        console.error(err);
-      });
-  }
-
-  function updateZoomLayers() {
-    const zoomedIn = map.getZoom() >= BLOCK_ZOOM_THRESHOLD;
-    if (zoomedIn) {
-      loadBlocksIfNeeded();
-      if (blockGroupLayer && map.hasLayer(blockGroupLayer)) map.removeLayer(blockGroupLayer);
-      if (blockLayer && !map.hasLayer(blockLayer)) blockLayer.addTo(map);
-    } else {
-      if (blockLayer && map.hasLayer(blockLayer)) map.removeLayer(blockLayer);
-      if (blockGroupLayer && !map.hasLayer(blockGroupLayer)) blockGroupLayer.addTo(map);
-    }
+    if (neighborhoodLayer) neighborhoodLayer.eachLayer((l) => l.setStyle(styleArea(l.feature)));
     renderLegend();
   }
 
   try {
     document.getElementById("loading").style.display = "none";
 
-    blockGroupLayer = L.geoJSON(BLOCK_GROUPS_DATA, { style: styleArea });
-    bindAreaLayer(blockGroupLayer, (p) => "Census block group " + p.GEOID.slice(-4));
-    blockGroupLayer.addTo(map);
+    neighborhoodLayer = L.geoJSON(NEIGHBORHOODS_DATA, { style: styleArea });
+    bindAreaLayer(neighborhoodLayer, (p) => p.GEOID);
+    neighborhoodLayer.addTo(map);
 
     districtLayer = L.geoJSON(DISTRICTS_DATA, {
-      style: { color: DISTRICT_COLOR, weight: 2.5, fillOpacity: 0, opacity: 0.9 },
+      // fill: false (not just fillOpacity: 0) so the district polygon's
+      // interior has no hit area -- otherwise, since districts render on
+      // top of neighborhoods, their (invisible) fill swallows every hover
+      // event citywide and neighborhood tooltips never show.
+      style: { color: DISTRICT_COLOR, weight: 2.5, fill: false, opacity: 0.9 },
       onEachFeature: (feature, layer) => {
         layer.bindTooltip(districtTooltip(feature.properties), { className: "vx-tip", sticky: true });
       },
@@ -338,7 +333,6 @@
 
     renderLegend();
     renderCallout();
-    map.on("zoomend", updateZoomLayers);
   } catch (err) {
     document.getElementById("loading").textContent = "Couldn't render map data.";
     console.error(err);
@@ -354,6 +348,15 @@
     districtsVisible = e.target.checked;
     if (districtsVisible) map.addLayer(districtLayer);
     else map.removeLayer(districtLayer);
+  });
+
+  document.getElementById("toggleHeat").addEventListener("change", (e) => {
+    heatVisible = e.target.checked;
+    if (heatVisible) heatLayer.addTo(map);
+    else map.removeLayer(heatLayer);
+    document.getElementById("heatLegendLine").style.display = heatVisible ? "flex" : "none";
+    // Re-style neighborhoods so their fill dims/undims to match.
+    if (neighborhoodLayer) neighborhoodLayer.eachLayer((l) => l.setStyle(styleArea(l.feature)));
   });
 })();
 </script>
