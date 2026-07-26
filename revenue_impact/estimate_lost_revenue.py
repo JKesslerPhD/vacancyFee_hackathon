@@ -25,7 +25,8 @@ Inputs:
         (park-excluded vacant parcel list -- run
         hackathon_data/qc_vacancy_exclusions.py first if this doesn't exist yet)
     ../ca_property_estimator/results/parcels_market_value_estimated.csv
-        (run ca_property_estimator/scripts/export_vacancy_fee_estimates.py first)
+        (ca_property_estimator is an external project, CARB AB 2446, not part
+        of this repo -- get its output CSV from a teammate and place it here)
     ../maps/data/council_districts.geojson
 
 Outputs:
@@ -70,6 +71,17 @@ SALES_TAX_RATE_CITY = 0.02         # city-specific share (1% Bradley-Burns + 1% 
 # value for the ~2.6% of parcels missing LOT_SIZE_AREA.
 MAX_DOLLAR_PER_SQFT = 500
 FALLBACK_ASSESSED_MULTIPLE = 100   # used only when LOT_SIZE_AREA is missing
+
+# Marsh/drainage/submerged parcels: $500/sqft assumes buildable urban land,
+# which these explicitly aren't (that's the whole point of the use code) --
+# 1,075 citywide have a median est_market_value/VAL_ASSD ratio of 72x and a
+# max of 203,000x under the general per-sqft cap, because a large lot size
+# times $500/sqft produces a huge ceiling regardless of whether the land is
+# a retention basin. Found via a real example: 3497 San Juan Rd, a Natomas
+# drainage/detention parcel assessed at $69, was landing at a modeled
+# $1.05M. These fall back to the assessed-multiple cap unconditionally,
+# same as parcels missing LOT_SIZE_AREA.
+NON_BUILDABLE_USE_CODES = {"WASTE LAND, MARSH, SWAMP, SUBMERGED-VACANT LAND"}
 
 COMMERCIAL_USE_PATTERN = re.compile(r"COMMERCIAL|RETAIL")
 
@@ -131,8 +143,9 @@ def load_parcels() -> pd.DataFrame:
         raise SystemExit(f"{VACANT_CSV} not found -- run hackathon_data/qc_vacancy_exclusions.py first")
     if not ESTIMATES_CSV.exists():
         raise SystemExit(
-            f"{ESTIMATES_CSV} not found -- run "
-            "ca_property_estimator/scripts/export_vacancy_fee_estimates.py first"
+            f"{ESTIMATES_CSV} not found -- ca_property_estimator is an external "
+            "project (CARB AB 2446), not part of this repo. Get its output CSV "
+            "from a teammate and place it at that path."
         )
 
     vacant = pd.read_csv(
@@ -163,10 +176,11 @@ def cap_market_value(df: pd.DataFrame) -> pd.DataFrame:
     df["est_market_value_uncapped"] = df["est_market_value"]
 
     has_lot = df["LOT_SIZE_AREA"].fillna(0) > 0
+    is_non_buildable = df["USE_CODE_STD_DESC_LPS"].isin(NON_BUILDABLE_USE_CODES)
     per_sqft_cap = df["LOT_SIZE_AREA"] * MAX_DOLLAR_PER_SQFT
     assessed_cap = df["VAL_ASSD"].fillna(0) * FALLBACK_ASSESSED_MULTIPLE
 
-    cap = np.where(has_lot, per_sqft_cap, assessed_cap)
+    cap = np.where(has_lot & ~is_non_buildable, per_sqft_cap, assessed_cap)
     capped_mask = df["est_market_value"].fillna(0) > cap
     df["est_market_value"] = np.where(capped_mask, cap, df["est_market_value"])
 

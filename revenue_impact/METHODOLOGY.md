@@ -15,6 +15,38 @@ should never be added together without saying so:
   lot sits empty instead of housing a business, that's real foregone taxable
   sales, no reassessment trigger required.
 
+## Data refresh (2026-07-26)
+
+The parcel cache and every dollar figure in this file were rebuilt after
+fixing a bug in `ca_property_estimator/src/data_loader.py`'s `build_query()`:
+the per-parcel scoring query included `AND DUPLICATE_SUMS = FALSE`, which
+silently dropped every parcel flagged as a duplicate-sum record from the
+full statewide pull, not just from the aggregate stats where that flag is
+meant to apply. Multi-unit buildings and condo associations were hit
+hardest. The clearest local example: 2417 J St in Sacramento, a highrise
+apartment building, used to split into a dozen-plus fragmentary records
+with nonsensical assessed values (several under $1,000, one at $10) instead
+of resolving to its two real APNs. The fixed query recovered 45,724
+previously-dropped parcels statewide (10,229,180 rows total), and 2417 J St
+now resolves cleanly to APNs 00700320240000 and 00700320260000.
+
+This changed the totals below but not the underlying methodology. Current
+run: 24,077 countywide vacant parcels (23,143 matched a market-value
+estimate), 6,518 within Sacramento city limits, 1,487 of those capped by
+`cap_market_value()` (removing $6.9B in phantom valuation from the city
+subset). Citywide headline totals: **$34.8M** potential property tax
+uplift, **$63.5M** annual sales tax across all jurisdictions, **$14.5M** of
+that as the city's own share. District 3: 486 vacant parcels, $1.7M
+potential uplift, $4.6M annual sales tax total / $1.05M city share.
+
+The specific illustrative numbers in the "Sanity cap" section right below
+(the $7,107.14/sqft cluster, the $276M parcel, the 2,702-parcel count) were
+measured on the pre-fix run and haven't been individually re-checked
+against the new cache. The capping mechanism they describe is unchanged
+and still active — a spot check on the current city subset shows the same
+pattern (an industrial-vacant parcel modeling out to $158M pre-cap, cut to
+$21.6M), just not re-verified figure by figure.
+
 ## Sanity cap on est_market_value (applied before everything below)
 
 `ca_property_estimator`'s land-value model produces a small but consequential
@@ -44,6 +76,22 @@ a large swing, but in the direction of *removing* a fabrication, not
 introducing one. `est_market_value_uncapped` is preserved in
 `parcel_revenue_estimates.csv` for anyone who wants to audit exactly which
 parcels were capped and by how much.
+
+**Marsh/drainage parcels get a tighter cap.** $500/sqft assumes buildable
+urban land, which "WASTE LAND, MARSH, SWAMP, SUBMERGED-VACANT LAND"
+parcels explicitly aren't (that's what the use code means, and it's a
+legitimate, unedited allowlist entry in `qc_vacancy_exclusions.py`, not a
+miscoded structure). A large lot size times $500/sqft produces a huge
+ceiling regardless of whether the land is a retention basin, so these
+1,075 citywide parcels (median assessed/market ratio 72x, worst case
+203,000x) fall back to the assessed-value-multiple cap unconditionally,
+same as parcels missing `LOT_SIZE_AREA`. Found via a real example flagged
+by a campaign volunteer: 3497 San Juan Rd, a Natomas drainage/detention
+parcel assessed at $69, was landing at a modeled $1.05M before this fix.
+`NON_BUILDABLE_USE_CODES` in `estimate_lost_revenue.py` is the one-item
+set this currently checks; District 3 (mostly Natomas basin geography)
+is disproportionately affected, at 188 of its 486 flagged vacant
+parcels (39%) being this use code, against 16% citywide.
 
 ## Property tax uplift
 
@@ -146,8 +194,8 @@ current Sacramento city council districts). This module is scoped to the
 district polygons — unincorporated county land, or another incorporated city
 in the countywide vacant-parcel set (Elk Grove, Folsom, Citrus Heights,
 Rancho Cordova, Galt) — is outside city limits and is dropped before any
-totals are computed, not carried through and footnoted. Of the 28,426
-countywide vacant parcels, 8,489 (30%) are within city limits and make up
+totals are computed, not carried through and footnoted. Of the 24,077
+countywide vacant parcels, 6,518 (27%) are within city limits and make up
 this module's entire output.
 
 ## Known limitations
