@@ -6,12 +6,17 @@ Two static pages, both embeddable via `<iframe>`:
   parcel map. Built by `build_map_data.py`. Needs to be hosted (not opened
   via `file://`) — it `fetch()`es its data files from `map_data/`, which
   Chrome/Safari block from a `file://` page under CORS.
-- **`vacancy_explorer.html`** — Census block group vacancy choropleth +
-  council district outlines + revenue-impact overlay, City of Sacramento
-  only. Built by `build_vacancy_explorer_data.py` from
-  `vacancy_explorer_template.html` **plus its two JSON data files inlined**
-  — so unlike `index.html`, this one opens by double-clicking it, no server
-  needed, in addition to being hostable/embeddable as-is. Edit the
+- **`vacancy_explorer.html`** — "Potential Benefits of a Vacancy Fee": a
+  property-count choropleth (block groups zoomed out, real census blocks
+  zoomed in past z15) + council district outlines + revenue overlay, City
+  of Sacramento only. Built by `build_vacancy_explorer_data.py` from
+  `vacancy_explorer_template.html` **with block groups + districts +
+  citywide totals inlined** — so this opens by double-clicking it, no
+  server needed, in addition to being hostable/embeddable as-is. The
+  census-block layer is the exception: it's ~5.6MB, so it's fetched lazily
+  from `map_data/blocks_vacancy.json` only once the map is zoomed in, and
+  only works when the page is served (not opened via `file://`) — the core
+  experience (block groups, districts, callout) works either way. Edit the
   *template*, not `vacancy_explorer.html` directly — it's regenerated (and
   overwritten) on every build.
 
@@ -24,8 +29,10 @@ Two static pages, both embeddable via `<iframe>`:
 # 3. revenue_impact/results/{parcel_revenue_estimates,district_revenue_summary}.csv
 python revenue_impact/estimate_lost_revenue.py
 
-# 4. downloads Census block group boundaries, clips to city limits, aggregates,
-#    writes map_data/*.json AND regenerates vacancy_explorer.html with them inlined
+# 4. downloads Census block-group AND real census-block (TABBLOCK20, ~350MB
+#    statewide, filtered locally) boundaries, clips to city limits,
+#    aggregates onto both geographies + districts, writes map_data/*.json,
+#    and regenerates vacancy_explorer.html with block groups/districts inlined
 python results/build_vacancy_explorer_data.py
 ```
 
@@ -33,6 +40,8 @@ python results/build_vacancy_explorer_data.py
 are also written standalone and tracked (small, a few hundred KB each) — not
 used by `vacancy_explorer.html` itself (which has its own inlined copy) but
 handy for debugging or reuse elsewhere without re-running the full build.
+`map_data/blocks_vacancy.json` (~5.6MB, 7,269 real census blocks) is tracked
+too, but is fetched at runtime, not inlined -- see above.
 
 ## Embedding on vacancyfee.org
 

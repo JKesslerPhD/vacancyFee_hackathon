@@ -93,6 +93,39 @@ def is_zoned_commercial(zoning) -> bool:
     return bool(ZONING_COMMERCIAL_PATTERN.match(token))
 
 
+INDUSTRIAL_USE_PATTERN = re.compile(r"INDUSTRIAL|WAREHOUSE|QUARR|STORAGE YARD")
+ZONING_INDUSTRIAL_PATTERN = re.compile(r"^(M-[12]|LI)(-|\(|$)")
+
+
+def is_zoned_industrial(zoning) -> bool:
+    if not isinstance(zoning, str):
+        return False
+    token = zoning.split()[0] if zoning.split() else ""
+    return bool(ZONING_INDUSTRIAL_PATTERN.match(token))
+
+
+def property_type_group(row) -> str:
+    """Plain-language property type for the public-facing map -- three
+    buckets, not a technical "commercial-eligible" flag. Commercial and
+    industrial win on either use-code or zoning signal (see
+    is_zoned_commercial/is_zoned_industrial); everything left over -- vacant
+    residential land, waste/marsh land, agricultural-vacant land -- is a
+    single "vacant land / abandoned residential" bucket, since by this point
+    in the pipeline (qc_vacancy_exclusions.py already dropped occupied
+    structures and parking lots) what's left in that group is either raw
+    unimproved land or a residential parcel whose building is either absent
+    or too devalued/non-habitable to carry an improvement value.
+    """
+    use = row.get("USE_CODE_STD_DESC_LPS")
+    use = use.upper() if isinstance(use, str) else ""
+    zoning = row.get("ZONING")
+    if "COMMERCIAL" in use or "RETAIL" in use or is_zoned_commercial(zoning):
+        return "commercial"
+    if INDUSTRIAL_USE_PATTERN.search(use) or is_zoned_industrial(zoning):
+        return "industrial"
+    return "vacant_land_residential"
+
+
 def load_parcels() -> pd.DataFrame:
     if not VACANT_CSV.exists():
         raise SystemExit(f"{VACANT_CSV} not found -- run hackathon_data/qc_vacancy_exclusions.py first")
@@ -152,6 +185,8 @@ def compute_revenue(df: pd.DataFrame) -> pd.DataFrame:
     # pre-cap.
     df["prop13_gap"] = (df["est_market_value"] - df["VAL_ASSD"].fillna(0)).clip(lower=0)
     df["potential_property_tax_uplift"] = df["prop13_gap"] * PROPERTY_TAX_RATE
+
+    df["property_type_group"] = df.apply(property_type_group, axis=1)
 
     # Commercial-eligible = assessor use-code says commercial/retail OR the
     # parcel is zoned for it -- a union, not an intersection. The use-code

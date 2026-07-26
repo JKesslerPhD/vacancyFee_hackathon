@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sacramento Vacancy &amp; Revenue Explorer</title>
+<title>Potential Benefits of a Vacancy Fee — Sacramento</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -30,7 +30,7 @@
     box-shadow: 0 2px 10px rgba(0,0,0,0.12);
     font-size: 13px;
   }
-  #panel h1 { font-size: 15px; margin: 0 0 4px; line-height: 1.25; }
+  #panel h1 { font-size: 16px; margin: 0 0 4px; line-height: 1.25; }
   #panel .sub { color: var(--text-secondary); font-size: 12px; margin-bottom: 10px; }
   #panel label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.02em; color: var(--text-secondary); margin: 10px 0 4px; }
   #panel select {
@@ -40,6 +40,7 @@
   #panel .toggle-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
   #panel .toggle-row input { margin: 0; }
   #panel .metric-note { font-size: 11px; color: var(--text-secondary); margin-top: 6px; line-height: 1.4; }
+  #panel .zoom-note { font-size: 11px; color: var(--text-secondary); margin-top: 10px; line-height: 1.4; padding-top: 8px; border-top: 1px solid var(--border); }
 
   #callout {
     position: absolute; top: 12px; right: 12px; z-index: 1000;
@@ -47,13 +48,13 @@
     padding: 14px 18px; box-shadow: 0 2px 10px rgba(0,0,0,0.12);
     max-width: 300px;
   }
-  #callout .title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; color: var(--text-secondary); margin-bottom: 8px; }
+  #callout .title { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
   #callout .stat-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 5px 0; border-top: 1px solid var(--border); }
   #callout .stat-row:first-of-type { border-top: none; }
   #callout .stat-label { font-size: 12.5px; color: var(--text-secondary); }
   #callout .stat-value { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); white-space: nowrap; }
   #callout .stat-value.muted { font-size: 14px; color: var(--text-primary); }
-  #callout .note { font-size: 10.5px; color: var(--text-secondary); margin-top: 8px; line-height: 1.4; }
+  #callout .breakdown { font-size: 11px; color: var(--text-secondary); margin-top: 8px; line-height: 1.5; }
 
   #legend {
     position: absolute; bottom: 20px; left: 12px; z-index: 1000;
@@ -66,23 +67,32 @@
   #legend .scale-labels { display: flex; justify-content: space-between; color: var(--text-secondary); width: 190px; }
   #legend .district-line { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
   #legend .district-swatch { width: 18px; height: 2px; background: var(--accent); }
+  #legend .geo-line { color: var(--text-secondary); margin-top: 6px; }
 
+  /* Compact by design -- short content is the real fix for tooltips running
+     off-screen; this just adds a hard ceiling + wrapping as a backstop. */
   .leaflet-tooltip.vx-tip {
     background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
-    padding: 8px 10px; font-size: 12.5px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    padding: 7px 9px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    max-width: 210px; white-space: normal;
   }
-  .vx-tip h3 { margin: 0 0 4px; font-size: 13px; }
-  .vx-tip table { border-collapse: collapse; }
+  .vx-tip h3 { margin: 0 0 3px; font-size: 12.5px; }
+  .vx-tip table { border-collapse: collapse; width: 100%; }
   .vx-tip td { padding: 1px 0; }
-  .vx-tip td.label { color: var(--text-secondary); padding-right: 10px; }
-  .vx-tip td.val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
-  .vx-tip .note { color: var(--text-secondary); font-size: 11px; margin-top: 4px; }
+  .vx-tip td.label { color: var(--text-secondary); padding-right: 8px; }
+  .vx-tip td.val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+  .vx-tip .breakdown { color: var(--text-secondary); font-size: 10.5px; margin-top: 3px; line-height: 1.4; }
 
   #loading {
     position: absolute; inset: 0; z-index: 2000; display: flex; align-items: center; justify-content: center;
     background: var(--surface-1); color: var(--text-secondary); font-size: 13px;
   }
-  #err { display: none; }
+  #blockLoading {
+    position: absolute; bottom: 20px; right: 12px; z-index: 1000; display: none;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 12px; font-size: 11.5px; color: var(--text-secondary);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  }
 
   @media (max-width: 720px) {
     #callout { position: static; margin: 12px; max-width: none; }
@@ -95,12 +105,12 @@
   <div id="map"></div>
 
   <div id="panel">
-    <h1>Sacramento Vacant Parcels</h1>
-    <div class="sub">Census block groups, City of Sacramento only</div>
+    <h1>Potential Benefits of a Vacancy Fee</h1>
+    <div class="sub">Vacant &amp; underused properties — City of Sacramento</div>
 
-    <label for="metric">Shade block groups by</label>
+    <label for="metric">Shade map by</label>
     <select id="metric">
-      <option value="count">Vacant parcel count</option>
+      <option value="count">Property count</option>
       <option value="proptax">Potential property tax uplift ($)</option>
       <option value="salestax">Est. annual sales tax lost ($)</option>
       <option value="yrssale">Years since last sale (hoarding signal)</option>
@@ -112,12 +122,14 @@
       <input type="checkbox" id="toggleDistricts" checked>
       <label for="toggleDistricts" style="margin:0; text-transform:none; letter-spacing:normal; font-size:13px; color:var(--text-primary);">Show council district outlines</label>
     </div>
+
+    <div class="zoom-note">Zoom in for census-block-level detail — most individual blocks have no vacant properties, so this is sparse by design.</div>
   </div>
 
   <div id="callout">
-    <div class="title">Citywide impact — vacant parcels</div>
+    <div class="title">Citywide Potential Benefit</div>
     <div class="stat-row">
-      <span class="stat-label">Est. annual sales tax lost</span>
+      <span class="stat-label">Annual sales tax</span>
       <span class="stat-value" id="calloutSalesTax">—</span>
     </div>
     <div class="stat-row">
@@ -125,33 +137,36 @@
       <span class="stat-value muted" id="calloutSalesTaxCity">—</span>
     </div>
     <div class="stat-row">
-      <span class="stat-label">Potential property tax uplift*</span>
+      <span class="stat-label">Property tax uplift</span>
       <span class="stat-value muted" id="calloutPropTax">—</span>
     </div>
-    <div class="stat-row">
-      <span class="stat-label">Commercial-eligible / total vacant</span>
-      <span class="stat-value muted" id="calloutCounts">—</span>
-    </div>
-    <div class="note">*One-time, contingent on sale/reassessment (Prop 13) — not an annual figure. Sales tax is the recurring one. See revenue_impact/METHODOLOGY.md.</div>
+    <div class="breakdown" id="calloutBreakdown">—</div>
   </div>
 
   <div id="legend">
-    <div class="title" id="legendTitle">Vacant parcel count</div>
+    <div class="title" id="legendTitle">Property count</div>
     <div class="ramp" id="legendRamp"></div>
     <div class="scale-labels"><span>fewer</span><span>more</span></div>
     <div class="district-line"><span class="district-swatch"></span><span>Council district boundary</span></div>
+    <div class="geo-line" id="geoLine">Showing: block groups</div>
   </div>
 
-  <div id="loading">Loading Sacramento vacancy data…</div>
+  <div id="blockLoading">Loading block-level detail…</div>
+
+  <div id="loading">Loading Sacramento data…</div>
 </div>
 
 <script>
 (function () {
   // Injected by build_vacancy_explorer_data.py -- see that script's
-  // write_html() for exactly how these placeholders get substituted.
+  // write_html() for exactly how these placeholders get substituted. Blocks
+  // are NOT inlined (too large -- ~6MB of geometry for a layer only used
+  // when zoomed in); fetched lazily instead, see loadBlocksIfNeeded().
   const BLOCK_GROUPS_DATA = /*__BLOCK_GROUPS_JSON__*/ null;
   const DISTRICTS_DATA = /*__DISTRICTS_JSON__*/ null;
   const CITYWIDE_DATA = /*__CITYWIDE_JSON__*/ null;
+  const BLOCKS_URL = "map_data/blocks_vacancy.json";
+  const BLOCK_ZOOM_THRESHOLD = 15;
 
   const RAMP = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#0d366b"];
   const NO_DATA_COLOR = "#e5e3de";
@@ -164,18 +179,22 @@
   }
   function fmtYears(v) { return v.toFixed(1) + " yrs"; }
   function fmtRatio(v) { return v.toFixed(1) + "×"; }
+  function typeBreakdown(p) {
+    return `${p.n_commercial.toLocaleString()} commercial · ${p.n_industrial.toLocaleString()} industrial · `
+      + `${p.n_vacant_land_residential.toLocaleString()} vacant land / residential`;
+  }
 
   const METRICS = {
-    count:    { colorProp: "fill_color_count",    valueProp: "vacant_count",               label: "Vacant parcel count", fmt: (v) => v.toLocaleString(),
+    count:    { colorProp: "fill_color_count",    valueProp: "property_count",              label: "Property count", fmt: (v) => v.toLocaleString(),
                 note: "" },
     proptax:  { colorProp: "fill_color_proptax",   valueProp: "total_property_tax_uplift",   label: "Potential property tax uplift ($)", fmt: fmtDollars,
                 note: "" },
     salestax: { colorProp: "fill_color_salestax",  valueProp: "total_sales_tax_total",       label: "Est. annual sales tax lost ($)", fmt: fmtDollars,
                 note: "" },
     yrssale:  { colorProp: "fill_color_yrssale",   valueProp: "median_years_since_sale",     label: "Median years since last sale", fmt: fmtYears,
-                note: "Hoarding signal, not proof — a long hold can also mean a stable owner-occupant. Only 49% of vacant parcels citywide have a recorded sale date; block groups without any are shown in gray." },
+                note: "Hoarding signal, not proof — a long hold can also mean a stable owner-occupant. Roughly half of properties have a recorded sale date; areas without any are shown in gray." },
     ratio:    { colorProp: "fill_color_ratio",     valueProp: "median_market_assessed_ratio", label: "Market value vs assessed value", fmt: fmtRatio,
-                note: "Hoarding signal, not proof — under Prop 13 this ratio grows every year a parcel isn't sold/reassessed, whether or not it's being \"hoarded.\" Pairs with years-since-sale; parcels high on both are the strongest candidates." },
+                note: "Hoarding signal, not proof — this ratio grows every year a property isn't sold, whether or not it's being \"hoarded.\" Pairs with years-since-sale; properties high on both are the strongest candidates." },
   };
 
   const map = L.map("map", { zoomControl: true }).setView([38.575, -121.478], 12);
@@ -185,10 +204,14 @@
   }).addTo(map);
 
   let blockGroupLayer = null;
+  let blockLayer = null;
+  let blocksData = null;
+  let blocksLoading = false;
   let districtLayer = null;
   let currentMetric = "count";
+  let districtsVisible = true;
 
-  function styleBlockGroup(feature) {
+  function styleArea(feature) {
     const m = METRICS[currentMetric];
     return {
       fillColor: feature.properties[m.colorProp] || NO_DATA_COLOR,
@@ -199,25 +222,16 @@
     };
   }
 
-  function blockGroupTooltip(p) {
-    const hoardingRow = p.n_with_sale_date > 0
-      ? `<tr><td class="label">Median yrs since sale</td><td class="val">${fmtYears(p.median_years_since_sale)} <span style="font-weight:400;color:var(--text-secondary);">(n=${p.n_with_sale_date})</span></td></tr>`
-      : `<tr><td class="label">Median yrs since sale</td><td class="val" style="color:var(--text-secondary);font-weight:400;">no sale-date data</td></tr>`;
-    const ratioRow = p.median_market_assessed_ratio
-      ? `<tr><td class="label">Market vs assessed</td><td class="val">${fmtRatio(p.median_market_assessed_ratio)}</td></tr>`
-      : "";
+  function areaTooltip(p, geoLabel) {
     return `
       <div class="vx-tip">
-        <h3>Census block group ${p.GEOID.slice(-4)}</h3>
+        <h3>${geoLabel}</h3>
         <table>
-          <tr><td class="label">Vacant parcels</td><td class="val">${p.vacant_count.toLocaleString()}</td></tr>
-          <tr><td class="label">Commercial-eligible</td><td class="val">${p.commercial_eligible_count.toLocaleString()}</td></tr>
-          <tr><td class="label">Property tax uplift*</td><td class="val">${fmtDollars(p.total_property_tax_uplift)}</td></tr>
+          <tr><td class="label">Properties</td><td class="val">${p.property_count.toLocaleString()}</td></tr>
+          <tr><td class="label">Property tax uplift</td><td class="val">${fmtDollars(p.total_property_tax_uplift)}</td></tr>
           <tr><td class="label">Sales tax lost/yr</td><td class="val">${fmtDollars(p.total_sales_tax_total)}</td></tr>
-          ${hoardingRow}
-          ${ratioRow}
         </table>
-        <div class="note">*One-time, contingent on sale/reassessment (Prop 13)</div>
+        <div class="breakdown">${typeBreakdown(p)}</div>
       </div>`;
   }
 
@@ -226,14 +240,22 @@
       <div class="vx-tip">
         <h3>${p.council_district}</h3>
         <table>
-          <tr><td class="label">Vacant parcels</td><td class="val">${p.vacant_count.toLocaleString()}</td></tr>
-          <tr><td class="label">Commercial-eligible</td><td class="val">${p.commercial_eligible_count.toLocaleString()}</td></tr>
-          <tr><td class="label">Property tax uplift*</td><td class="val">${fmtDollars(p.total_property_tax_uplift)}</td></tr>
-          <tr><td class="label">Sales tax lost/yr (all agencies)</td><td class="val">${fmtDollars(p.total_sales_tax_total)}</td></tr>
-          <tr><td class="label">— City of Sacramento's cut</td><td class="val">${fmtDollars(p.total_sales_tax_city)}</td></tr>
+          <tr><td class="label">Properties</td><td class="val">${p.property_count.toLocaleString()}</td></tr>
+          <tr><td class="label">Property tax uplift</td><td class="val">${fmtDollars(p.total_property_tax_uplift)}</td></tr>
+          <tr><td class="label">Sales tax lost/yr</td><td class="val">${fmtDollars(p.total_sales_tax_total)}</td></tr>
+          <tr><td class="label">— city's cut</td><td class="val">${fmtDollars(p.total_sales_tax_city)}</td></tr>
         </table>
-        <div class="note">*One-time, contingent on sale/reassessment (Prop 13). "City's cut" = the 2 of 8.75 combined sales-tax points that go to the city's own General/Measure U Fund (1% Bradley-Burns + 1% Measure U) — the rest goes to the state, county, and other special districts.</div>
+        <div class="breakdown">${typeBreakdown(p)}</div>
       </div>`;
+  }
+
+  function bindAreaLayer(layer, geoLabelFn) {
+    layer.eachLayer((sub) => {
+      const feature = sub.feature;
+      sub.bindTooltip(areaTooltip(feature.properties, geoLabelFn(feature.properties)), { className: "vx-tip", sticky: true });
+      sub.on("mouseover", () => sub.setStyle({ weight: 2, opacity: 1, color: "#22303c" }));
+      sub.on("mouseout", () => sub.setStyle(styleArea(feature)));
+    });
   }
 
   function renderLegend() {
@@ -247,6 +269,8 @@
       ramp.appendChild(s);
     });
     document.getElementById("metricNote").textContent = m.note;
+    document.getElementById("geoLine").textContent =
+      "Showing: " + (map.getZoom() >= BLOCK_ZOOM_THRESHOLD ? "census blocks" : "block groups");
   }
 
   function renderCallout() {
@@ -254,33 +278,56 @@
     document.getElementById("calloutSalesTax").textContent = fmtDollars(CITYWIDE_DATA.total_sales_tax_total);
     document.getElementById("calloutSalesTaxCity").textContent = fmtDollars(CITYWIDE_DATA.total_sales_tax_city);
     document.getElementById("calloutPropTax").textContent = fmtDollars(CITYWIDE_DATA.total_property_tax_uplift);
-    document.getElementById("calloutCounts").textContent =
-      CITYWIDE_DATA.commercial_eligible_count.toLocaleString() + " / " + CITYWIDE_DATA.vacant_count.toLocaleString();
+    document.getElementById("calloutBreakdown").textContent =
+      CITYWIDE_DATA.property_count.toLocaleString() + " vacant/underused properties — " + typeBreakdown(CITYWIDE_DATA);
   }
 
   function applyMetric() {
-    if (blockGroupLayer) {
-      blockGroupLayer.eachLayer((layer) => layer.setStyle(styleBlockGroup(layer.feature)));
+    if (blockGroupLayer) blockGroupLayer.eachLayer((l) => l.setStyle(styleArea(l.feature)));
+    if (blockLayer) blockLayer.eachLayer((l) => l.setStyle(styleArea(l.feature)));
+    renderLegend();
+  }
+
+  function loadBlocksIfNeeded() {
+    if (blocksData || blocksLoading) return;
+    blocksLoading = true;
+    document.getElementById("blockLoading").style.display = "block";
+    fetch(BLOCKS_URL)
+      .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then((data) => {
+        blocksData = data;
+        blockLayer = L.geoJSON(blocksData, { style: styleArea });
+        bindAreaLayer(blockLayer, () => "Census block");
+        blocksLoading = false;
+        document.getElementById("blockLoading").style.display = "none";
+        updateZoomLayers();
+      })
+      .catch((err) => {
+        blocksLoading = false;
+        document.getElementById("blockLoading").textContent = "Block-level detail needs this page to be hosted (not opened as a file).";
+        console.error(err);
+      });
+  }
+
+  function updateZoomLayers() {
+    const zoomedIn = map.getZoom() >= BLOCK_ZOOM_THRESHOLD;
+    if (zoomedIn) {
+      loadBlocksIfNeeded();
+      if (blockGroupLayer && map.hasLayer(blockGroupLayer)) map.removeLayer(blockGroupLayer);
+      if (blockLayer && !map.hasLayer(blockLayer)) blockLayer.addTo(map);
+    } else {
+      if (blockLayer && map.hasLayer(blockLayer)) map.removeLayer(blockLayer);
+      if (blockGroupLayer && !map.hasLayer(blockGroupLayer)) blockGroupLayer.addTo(map);
     }
     renderLegend();
   }
 
-  // Data is inlined at build time by build_vacancy_explorer_data.py (see
-  // BLOCK_GROUPS_DATA / DISTRICTS_DATA below) specifically so this page opens
-  // by double-clicking the file -- fetch() of a local JSON file is blocked by
-  // CORS from a file:// page in Chrome/Safari, size has nothing to do with it
-  // (both files together are under 700KB).
   try {
     document.getElementById("loading").style.display = "none";
 
-    blockGroupLayer = L.geoJSON(BLOCK_GROUPS_DATA, {
-      style: styleBlockGroup,
-      onEachFeature: (feature, layer) => {
-        layer.bindTooltip(blockGroupTooltip(feature.properties), { className: "vx-tip", sticky: true });
-        layer.on("mouseover", () => layer.setStyle({ weight: 2, opacity: 1, color: "#22303c" }));
-        layer.on("mouseout", () => layer.setStyle(styleBlockGroup(feature)));
-      },
-    }).addTo(map);
+    blockGroupLayer = L.geoJSON(BLOCK_GROUPS_DATA, { style: styleArea });
+    bindAreaLayer(blockGroupLayer, (p) => "Census block group " + p.GEOID.slice(-4));
+    blockGroupLayer.addTo(map);
 
     districtLayer = L.geoJSON(DISTRICTS_DATA, {
       style: { color: DISTRICT_COLOR, weight: 2.5, fillOpacity: 0, opacity: 0.9 },
@@ -291,8 +338,9 @@
 
     renderLegend();
     renderCallout();
+    map.on("zoomend", updateZoomLayers);
   } catch (err) {
-    document.getElementById("loading").textContent = "Couldn't render vacancy data.";
+    document.getElementById("loading").textContent = "Couldn't render map data.";
     console.error(err);
   }
 
@@ -303,7 +351,8 @@
 
   document.getElementById("toggleDistricts").addEventListener("change", (e) => {
     if (!districtLayer) return;
-    if (e.target.checked) map.addLayer(districtLayer);
+    districtsVisible = e.target.checked;
+    if (districtsVisible) map.addLayer(districtLayer);
     else map.removeLayer(districtLayer);
   });
 })();
