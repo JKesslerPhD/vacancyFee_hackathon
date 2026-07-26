@@ -1,0 +1,19 @@
+{
+  "district": "District 3",
+  "council_member": "Karina Talamantes",
+  "city_n_vacant_properties": 6518,
+  "city_n_commercial": 1223,
+  "city_n_industrial": 677,
+  "city_n_vacant_land_residential": 4618,
+  "city_total_property_tax_uplift": 34814315.40296153,
+  "city_total_sales_tax": 63513752.0970085,
+  "city_total_sales_tax_city_share": 14517429.050744802,
+  "city_n_with_sale_date": 3304,
+  "city_median_years_since_sale": 7.156741957563312,
+  "city_pct_vacant_10plus_years": 0.3689467312348668,
+  "city_pct_vacant_5plus_years": 0.6301452784503632,
+  "d3_n_vacant_properties": 486,
+  "d3_total_property_tax_uplift": 1707145.266449306,
+  "d3_total_sales_tax": 4611898.730690684,
+  "d3_total_sales_tax_city_share": 1054148.281300728
+}
