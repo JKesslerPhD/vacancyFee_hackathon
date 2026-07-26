@@ -71,14 +71,42 @@ Fund revenue — useful context, not a substitute for a real TRA-level split.
 
 ## Sales tax (recurring)
 
-Only computed for parcels whose `USE_CODE_STD_DESC_LPS` contains
-"COMMERCIAL" or "RETAIL" (~2,100 of the ~28,400 vacant parcels) — vacant
-residential, industrial, waste/marsh, and parking-lot parcels are excluded
-because they either can't legally house retail/commercial sales activity or
-the estimate would be too speculative to defend (e.g. a still-operating
-parking lot may already generate some untaxed cash income, but converting it
-to a sales-tax-generating business isn't a given the way it is for
-commercial-zoned vacant land).
+### Which parcels count as commercial-eligible
+
+A parcel counts if **either** the assessor's `USE_CODE_STD_DESC_LPS` says
+commercial/retail, **or** its `ZONING` is a commercial base code — a union,
+not an intersection. This wasn't the original design: it started as
+use-code-only, which turned out to badly undercount. A by-hand audit
+(prompted by "is this based on zoning?") found 587–754 parcels zoned
+`C-1`/`C-2`/`C-3`/`C-4`/`GC`/`SC`/`LC`/etc. but coded `RESIDENTIAL-VACANT
+LAND` or `INDUSTRIAL-VACANT LAND` by the assessor — land that's legally
+buildable as commercial today, sitting vacant, just not classified that way
+in the tax roll. Adding the zoning signal raised the citywide sales-tax
+total from $36.2M to **$50.4M/year** (+39%) and roughly doubled District 4's
+commercial-eligible count (189 → 355) — Sacramento's downtown/midtown core
+has a lot of commercially-zoned vacant lots the use-code alone was missing.
+
+`ZONING` is messy free text (hundreds of raw variants, PUD/SPD/overlay
+suffixes, occasional multi-zone entries), so the zoning check only matches a
+conservative, verifiable base-code allowlist: `C-1` through `C-4`, `GC`
+(general commercial), `SC` (shopping/service commercial), `LC` (limited
+commercial), `CC` (community commercial), `BP` (business park), `OB` (office
+building), and the mixed-use family (`MU`, `CMU`, `OPMU`, `OIMU`, `RMU`,
+`DMU`, `VCMU` — mixed-use zoning explicitly permits ground-floor commercial).
+Ambiguous 2-letter codes that couldn't be confidently verified from the data
+alone (`SPA`, `HC`, `MP`, `DC`, `TC`, `AC`, ...) are deliberately left out —
+undercounting a few is preferable to guessing wrong on codes whose meaning
+isn't certain. See `is_zoned_commercial()` in `estimate_lost_revenue.py`
+for the exact pattern, and `commercial_basis` in
+`parcel_revenue_estimates.csv` (`use_code_only` / `zoning_only` /
+`use_code_and_zoning`) to see which signal caught which parcel.
+
+Excluded entirely regardless of zoning: vacant residential, industrial,
+waste/marsh, and — per direct instruction — parking-lot parcels (see
+`qc_vacancy_exclusions.py`), because a still-operating parking lot may
+already generate some untaxed cash income, but converting it to a
+sales-tax-generating business isn't a given the way it is for vacant,
+commercially-zoned land.
 
 ```
 imputed_annual_rent = est_market_value * 0.065              # cap rate

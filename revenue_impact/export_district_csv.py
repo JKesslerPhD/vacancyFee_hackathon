@@ -25,7 +25,7 @@ PARCEL_REVENUE_CSV = REPO_ROOT / "revenue_impact" / "results" / "parcel_revenue_
 COLUMNS = [
     "PARCEL_APN", "SITE_ADDR", "SITE_CITY", "SITE_ZIP",
     "vacancy_tier", "USE_CODE_STD_DESC_LPS", "USE_CODE_MUNI_DESC", "ZONING",
-    "commercial_eligible",
+    "commercial_eligible", "commercial_basis",
     "ASSESSEE_OWNER_NAME_1",
     "LOT_SIZE_AREA", "BUILDING_SQFT", "YR_BLT",
     "VAL_ASSD", "est_market_value", "prop13_gap",
@@ -51,10 +51,13 @@ def main() -> None:
     if d.empty:
         raise SystemExit(f"No parcels found for district {args.district} -- valid range is 1-8")
 
+    # ZONING is not requested here -- estimate_lost_revenue.py's output
+    # (loaded into `revenue` above) already carries it, and requesting it
+    # again would collide on the merge below (ZONING_x/ZONING_y).
     vacant = pd.read_csv(
         VACANT_CSV,
         usecols=["PARCEL_APN", "SITE_ADDR", "SITE_CITY", "SITE_ZIP", "USE_CODE_MUNI_DESC",
-                 "ZONING", "ASSESSEE_OWNER_NAME_1", "BUILDING_SQFT", "YR_BLT"],
+                 "ASSESSEE_OWNER_NAME_1", "BUILDING_SQFT", "YR_BLT"],
         dtype={"PARCEL_APN": str},
         low_memory=False,
     )

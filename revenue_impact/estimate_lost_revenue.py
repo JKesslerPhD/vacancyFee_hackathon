@@ -73,6 +73,25 @@ FALLBACK_ASSESSED_MULTIPLE = 100   # used only when LOT_SIZE_AREA is missing
 
 COMMERCIAL_USE_PATTERN = re.compile(r"COMMERCIAL|RETAIL")
 
+# Zoning is messy free text -- hundreds of raw variants, overlay/PUD/SPD
+# suffixes, some parcels listing multiple zones -- so this matches only the
+# first whitespace-separated token's base code, allowing a trailing
+# "-SOMETHING" modifier. Deliberately conservative: known commercial base
+# zones (C-1..4, general/shopping/limited/community commercial, business
+# park, office building) plus the mixed-use family, which explicitly permits
+# ground-floor commercial. Left out ambiguous 2-letter codes that could not
+# be verified (SPA, HC, MP, DC, TC, AC, ...) -- see METHODOLOGY.md.
+ZONING_COMMERCIAL_PATTERN = re.compile(
+    r"^(C-[1-4]|GC|SC|LC|CC|BP|OB|CMU|MU|OPMU|OIMU|RMU|DMU|VCMU)(-|\(|$)"
+)
+
+
+def is_zoned_commercial(zoning) -> bool:
+    if not isinstance(zoning, str):
+        return False
+    token = zoning.split()[0] if zoning.split() else ""
+    return bool(ZONING_COMMERCIAL_PATTERN.match(token))
+
 
 def load_parcels() -> pd.DataFrame:
     if not VACANT_CSV.exists():
@@ -86,7 +105,7 @@ def load_parcels() -> pd.DataFrame:
     vacant = pd.read_csv(
         VACANT_CSV,
         usecols=["PARCEL_APN", "LATITUDE", "LONGITUDE", "VAL_ASSD", "USE_CODE_STD_DESC_LPS",
-                 "vacancy_tier", "LOT_SIZE_AREA", "LAST_SALE_DATE_TRANSFER"],
+                 "vacancy_tier", "LOT_SIZE_AREA", "LAST_SALE_DATE_TRANSFER", "ZONING"],
         dtype={"PARCEL_APN": str},
         low_memory=False,
     )
@@ -134,8 +153,20 @@ def compute_revenue(df: pd.DataFrame) -> pd.DataFrame:
     df["prop13_gap"] = (df["est_market_value"] - df["VAL_ASSD"].fillna(0)).clip(lower=0)
     df["potential_property_tax_uplift"] = df["prop13_gap"] * PROPERTY_TAX_RATE
 
-    is_commercial = df["USE_CODE_STD_DESC_LPS"].fillna("").str.upper().str.contains(COMMERCIAL_USE_PATTERN)
+    # Commercial-eligible = assessor use-code says commercial/retail OR the
+    # parcel is zoned for it -- a union, not an intersection. The use-code
+    # alone misses 587-754 parcels zoned C-1..4/GC/SC/LC/etc. but coded
+    # RESIDENTIAL-VACANT LAND or INDUSTRIAL-VACANT LAND by the assessor; see
+    # METHODOLOGY.md for the by-hand audit that found this.
+    is_commercial_use = df["USE_CODE_STD_DESC_LPS"].fillna("").str.upper().str.contains(COMMERCIAL_USE_PATTERN)
+    is_commercial_zone = df["ZONING"].apply(is_zoned_commercial)
+    is_commercial = is_commercial_use | is_commercial_zone
     df["commercial_eligible"] = is_commercial
+    df["commercial_basis"] = np.select(
+        [is_commercial_use & is_commercial_zone, is_commercial_use, is_commercial_zone],
+        ["use_code_and_zoning", "use_code_only", "zoning_only"],
+        default="not_commercial",
+    )
 
     imputed_rent = df["est_market_value"].fillna(0) * CAP_RATE
     imputed_revenue = imputed_rent / OCCUPANCY_COST_RATIO
