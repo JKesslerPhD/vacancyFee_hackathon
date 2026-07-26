@@ -22,18 +22,19 @@ hackathon_data/  ── trimmed CSV/GeoJSON/KML/GPKG + vacancy_tier classificati
         │
         ├──────────────────────────────────────────────────────────┐
         ▼                                                          ▼
-hackathon_data/311_analysis.ipynb                       ca_property_estimator/
+hackathon_data/311_analysis.ipynb                       CA Property Estimator (external)
 ◄── PRIMARY ANALYSIS NOTEBOOK                           ◄── market-value estimation (statewide CARB
   Step 1-2   load 311 calls (SacCounty_SalesForce311_       AB 2446 model, scoped to Sacramento).
-             calls.gpkg), build a reproducible 50K-row     Trained against the CARB Snowflake
-             beta subset for fast iteration                warehouse (not run from this repo); this
-  Step 3-7   clean data, join council districts +          repo runs scripts/export_vacancy_fee_
-             parcel attributes, engineer "likely            estimates.py against the pre-scored
-             vacancy indicator" flags (board-up,            statewide parquet to produce Sacramento
-             abandoned)                                    market-value estimates. Replaces the
-  Step 8-14  interactive maps (Folium), ZIP/street-        retired parcel_actualValue/ comp-based
-             level rankings, seasonality, category         pipeline.
-             correlation analysis
+             calls.gpkg), build a reproducible 50K-row     Lives in the CARB AB 2446 project, not
+             beta subset for fast iteration                this repo -- trained and run against the
+  Step 3-7   clean data, join council districts +          CARB Snowflake warehouse. This repo just
+             parcel attributes, engineer "likely            consumes its output CSV, expected at
+             vacancy indicator" flags (board-up,            ca_property_estimator/results/parcels_
+             abandoned)                                    market_value_estimated.csv locally (not
+  Step 8-14  interactive maps (Folium), ZIP/street-        tracked in git -- copy it from a teammate
+             level rankings, seasonality, category         or regenerate from the CARB project).
+             correlation analysis                          Replaces the retired parcel_actualValue/
+                                                             comp-based pipeline.
   Step 15    binomial GLM: which 311 categories
              predict high-likelihood vacancy
              indicators
@@ -87,8 +88,8 @@ The notebook is the source of truth for the 311/vacancy analysis; downstream art
 | `hackathon_data/DATA_DOWNLOAD.md` | Google Drive links for the large hackathon data files (too big for git). |
 | `311_heatmap/` | Vacancy × 311 synthesis (`vacancy_311_synthesis.py`, `predict_vacancy.py`, `correlation_analysis.py`) with the narrative writeup in `NARRATIVE.md`, signal reference in `ANALYSIS_NOTES.md`, and headline numbers in `findings.json`. Source of `public_comment_vacant_property_enforcement.txt`. |
 | `maps/` | pyQGIS presentation map suite (`render_maps.py`, `prep_layers.py`) — county/midtown PNGs of 311 density, vacant parcels by tier, and the 311×vacancy synthesis; see `maps/README.md`. |
-| `ca_property_estimator/` | Market-value estimation. Model training (`src/`) runs against the CARB AB 2446 program's Snowflake warehouse, not from this repo; `scripts/export_vacancy_fee_estimates.py` scopes the pre-scored statewide output to Sacramento and reshapes it for `results/build_map_data.py`. See `ca_property_estimator/README.md`. Replaces the retired `parcel_actualValue/` comp-based pipeline. |
-| `revenue_impact/` | Unrealized tax base per council district: one-time property tax uplift (contingent on Prop 13 sale/reassessment) and recurring annual sales tax lost on vacant commercial/retail parcels. Every rate is sourced in `revenue_impact/METHODOLOGY.md`; run `estimate_lost_revenue.py` after `ca_property_estimator`'s export step. |
+| `ca_property_estimator/` (external) | Market-value estimation. **Not part of this repo** -- it's a separate project under the CARB AB 2446 program, trained and run against CARB's Snowflake warehouse. This repo only expects its output file locally at `ca_property_estimator/results/parcels_market_value_estimated.csv` (gitignored; get it from a teammate or the CARB project). Replaces the retired `parcel_actualValue/` comp-based pipeline. |
+| `revenue_impact/` | Unrealized tax base per council district: one-time property tax uplift (contingent on Prop 13 sale/reassessment) and recurring annual sales tax lost on vacant commercial/retail parcels. Every rate is sourced in `revenue_impact/METHODOLOGY.md`; run `estimate_lost_revenue.py` once `ca_property_estimator`'s output CSV is in place. |
 | `results/` | **"The Vacant Equity Gap"** — the public-facing static site (`index.html`, `map.js`, `map_data/`) bundling headline figures and an interactive map for distribution off this repo. |
 | `march17_vacant_lot_tax_support_report.qmd` / `.html` | **Standalone report artifact.** Methods/Results/Discussion/Conclusion writeup built from the notebook's checkpoint, for the March 17 Law & Legislation Committee hearing. |
 | `Resources/` | Source material for the March 17 hearing: the county's own program discussion memo (PDF), the submitted public comment, and committee responses. |
@@ -122,5 +123,5 @@ Run `qc_vacancy_exclusions.py` to regenerate `vacant_parcels_qc.csv`/`.geojson`;
 
 ## Status
 
-- **Done:** vacancy-tier parcel classification; hackathon data exports (CSV/GeoJSON/KML/GPKG); the March 17, 2026 committee hearing and submitted written comment (`Resources/march17_vacant_lot_tax_support_comment.md`, committee responses in `Resources/march17_committee_responses.md`); the `311_analysis.ipynb` pipeline through GLM + exported outputs; the standalone `.qmd` report (rendered `.html` checked in); the `311_heatmap/` vacancy×311 synthesis and prediction model; the `maps/` pyQGIS presentation suite; the `ca_property_estimator/` market-value pipeline (replacing the retired `parcel_actualValue/`); the `revenue_impact/` per-district unrealized tax base estimate; and the `results/` public-facing site.
-- **Not yet started / open:** no single automated pipeline ties `hackathon_data/311_analysis.ipynb` → `311_heatmap/` → `maps/` → `results/` together — each stage currently expects the previous stage's outputs to already exist and be re-run manually when upstream data changes. `ca_property_estimator`'s vacant-land estimates include a handful of implausibly low values relative to assessed value for large/unusual parcels (see PR discussion) — worth a follow-up sanity-cap pass like the retired pipeline had.
+- **Done:** vacancy-tier parcel classification; hackathon data exports (CSV/GeoJSON/KML/GPKG); the March 17, 2026 committee hearing and submitted written comment (`Resources/march17_vacant_lot_tax_support_comment.md`, committee responses in `Resources/march17_committee_responses.md`); the `311_analysis.ipynb` pipeline through GLM + exported outputs; the standalone `.qmd` report (rendered `.html` checked in); the `311_heatmap/` vacancy×311 synthesis and prediction model; the `maps/` pyQGIS presentation suite; consuming the external `ca_property_estimator` market-value pipeline's output (replacing the retired `parcel_actualValue/`); the `revenue_impact/` per-district unrealized tax base estimate; and the `results/` public-facing site.
+- **Not yet started / open:** no single automated pipeline ties `hackathon_data/311_analysis.ipynb` → `311_heatmap/` → `maps/` → `results/` together — each stage currently expects the previous stage's outputs to already exist and be re-run manually when upstream data changes. The external `ca_property_estimator`'s vacant-land estimates include a handful of implausibly low values relative to assessed value for large/unusual parcels (see `revenue_impact/METHODOLOGY.md`'s Known Limitations) — worth a follow-up sanity-cap pass like the retired pipeline had.
