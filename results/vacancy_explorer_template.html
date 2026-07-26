@@ -39,6 +39,21 @@
   }
   #panel .toggle-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
   #panel .toggle-row input { margin: 0; }
+  #panel .metric-note { font-size: 11px; color: var(--text-secondary); margin-top: 6px; line-height: 1.4; }
+
+  #callout {
+    position: absolute; top: 12px; right: 12px; z-index: 1000;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 18px; box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+    max-width: 300px;
+  }
+  #callout .title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; color: var(--text-secondary); margin-bottom: 8px; }
+  #callout .stat-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 5px 0; border-top: 1px solid var(--border); }
+  #callout .stat-row:first-of-type { border-top: none; }
+  #callout .stat-label { font-size: 12.5px; color: var(--text-secondary); }
+  #callout .stat-value { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); white-space: nowrap; }
+  #callout .stat-value.muted { font-size: 14px; color: var(--text-primary); }
+  #callout .note { font-size: 10.5px; color: var(--text-secondary); margin-top: 8px; line-height: 1.4; }
 
   #legend {
     position: absolute; bottom: 20px; left: 12px; z-index: 1000;
@@ -69,7 +84,8 @@
   }
   #err { display: none; }
 
-  @media (max-width: 520px) {
+  @media (max-width: 720px) {
+    #callout { position: static; margin: 12px; max-width: none; }
     #panel { width: calc(100% - 24px); }
   }
 </style>
@@ -87,12 +103,36 @@
       <option value="count">Vacant parcel count</option>
       <option value="proptax">Potential property tax uplift ($)</option>
       <option value="salestax">Est. annual sales tax lost ($)</option>
+      <option value="yrssale">Years since last sale (hoarding signal)</option>
+      <option value="ratio">Market value vs assessed value (hoarding signal)</option>
     </select>
+    <div class="metric-note" id="metricNote"></div>
 
     <div class="toggle-row">
       <input type="checkbox" id="toggleDistricts" checked>
       <label for="toggleDistricts" style="margin:0; text-transform:none; letter-spacing:normal; font-size:13px; color:var(--text-primary);">Show council district outlines</label>
     </div>
+  </div>
+
+  <div id="callout">
+    <div class="title">Citywide impact — vacant parcels</div>
+    <div class="stat-row">
+      <span class="stat-label">Est. annual sales tax lost</span>
+      <span class="stat-value" id="calloutSalesTax">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">— city general fund share</span>
+      <span class="stat-value muted" id="calloutSalesTaxCity">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Potential property tax uplift*</span>
+      <span class="stat-value muted" id="calloutPropTax">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Commercial-eligible / total vacant</span>
+      <span class="stat-value muted" id="calloutCounts">—</span>
+    </div>
+    <div class="note">*One-time, contingent on sale/reassessment (Prop 13) — not an annual figure. Sales tax is the recurring one. See revenue_impact/METHODOLOGY.md.</div>
   </div>
 
   <div id="legend">
@@ -111,22 +151,32 @@
   // write_html() for exactly how these placeholders get substituted.
   const BLOCK_GROUPS_DATA = /*__BLOCK_GROUPS_JSON__*/ null;
   const DISTRICTS_DATA = /*__DISTRICTS_JSON__*/ null;
+  const CITYWIDE_DATA = /*__CITYWIDE_JSON__*/ null;
 
   const RAMP = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#0d366b"];
   const NO_DATA_COLOR = "#e5e3de";
   const DISTRICT_COLOR = "#eb6834";
-
-  const METRICS = {
-    count:    { colorProp: "fill_color_count",    valueProp: "vacant_count",             label: "Vacant parcel count", fmt: (v) => v.toLocaleString() },
-    proptax:  { colorProp: "fill_color_proptax",   valueProp: "total_property_tax_uplift", label: "Potential property tax uplift ($)", fmt: fmtDollars },
-    salestax: { colorProp: "fill_color_salestax",  valueProp: "total_sales_tax_total",     label: "Est. annual sales tax lost ($)", fmt: fmtDollars },
-  };
 
   function fmtDollars(v) {
     if (v >= 1e6) return "$" + (v / 1e6).toFixed(1) + "M";
     if (v >= 1e3) return "$" + (v / 1e3).toFixed(0) + "K";
     return "$" + v.toLocaleString();
   }
+  function fmtYears(v) { return v.toFixed(1) + " yrs"; }
+  function fmtRatio(v) { return v.toFixed(1) + "×"; }
+
+  const METRICS = {
+    count:    { colorProp: "fill_color_count",    valueProp: "vacant_count",               label: "Vacant parcel count", fmt: (v) => v.toLocaleString(),
+                note: "" },
+    proptax:  { colorProp: "fill_color_proptax",   valueProp: "total_property_tax_uplift",   label: "Potential property tax uplift ($)", fmt: fmtDollars,
+                note: "" },
+    salestax: { colorProp: "fill_color_salestax",  valueProp: "total_sales_tax_total",       label: "Est. annual sales tax lost ($)", fmt: fmtDollars,
+                note: "" },
+    yrssale:  { colorProp: "fill_color_yrssale",   valueProp: "median_years_since_sale",     label: "Median years since last sale", fmt: fmtYears,
+                note: "Hoarding signal, not proof — a long hold can also mean a stable owner-occupant. Only 49% of vacant parcels citywide have a recorded sale date; block groups without any are shown in gray." },
+    ratio:    { colorProp: "fill_color_ratio",     valueProp: "median_market_assessed_ratio", label: "Market value vs assessed value", fmt: fmtRatio,
+                note: "Hoarding signal, not proof — under Prop 13 this ratio grows every year a parcel isn't sold/reassessed, whether or not it's being \"hoarded.\" Pairs with years-since-sale; parcels high on both are the strongest candidates." },
+  };
 
   const map = L.map("map", { zoomControl: true }).setView([38.575, -121.478], 12);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -150,7 +200,12 @@
   }
 
   function blockGroupTooltip(p) {
-    const m = METRICS[currentMetric];
+    const hoardingRow = p.n_with_sale_date > 0
+      ? `<tr><td class="label">Median yrs since sale</td><td class="val">${fmtYears(p.median_years_since_sale)} <span style="font-weight:400;color:var(--text-secondary);">(n=${p.n_with_sale_date})</span></td></tr>`
+      : `<tr><td class="label">Median yrs since sale</td><td class="val" style="color:var(--text-secondary);font-weight:400;">no sale-date data</td></tr>`;
+    const ratioRow = p.median_market_assessed_ratio
+      ? `<tr><td class="label">Market vs assessed</td><td class="val">${fmtRatio(p.median_market_assessed_ratio)}</td></tr>`
+      : "";
     return `
       <div class="vx-tip">
         <h3>Census block group ${p.GEOID.slice(-4)}</h3>
@@ -159,6 +214,8 @@
           <tr><td class="label">Commercial-eligible</td><td class="val">${p.commercial_eligible_count.toLocaleString()}</td></tr>
           <tr><td class="label">Property tax uplift*</td><td class="val">${fmtDollars(p.total_property_tax_uplift)}</td></tr>
           <tr><td class="label">Sales tax lost/yr</td><td class="val">${fmtDollars(p.total_sales_tax_total)}</td></tr>
+          ${hoardingRow}
+          ${ratioRow}
         </table>
         <div class="note">*One-time, contingent on sale/reassessment (Prop 13)</div>
       </div>`;
@@ -172,10 +229,10 @@
           <tr><td class="label">Vacant parcels</td><td class="val">${p.vacant_count.toLocaleString()}</td></tr>
           <tr><td class="label">Commercial-eligible</td><td class="val">${p.commercial_eligible_count.toLocaleString()}</td></tr>
           <tr><td class="label">Property tax uplift*</td><td class="val">${fmtDollars(p.total_property_tax_uplift)}</td></tr>
-          <tr><td class="label">Sales tax lost/yr</td><td class="val">${fmtDollars(p.total_sales_tax_total)}</td></tr>
-          <tr><td class="label">— city share/yr</td><td class="val">${fmtDollars(p.total_sales_tax_city)}</td></tr>
+          <tr><td class="label">Sales tax lost/yr (all agencies)</td><td class="val">${fmtDollars(p.total_sales_tax_total)}</td></tr>
+          <tr><td class="label">— City of Sacramento's cut</td><td class="val">${fmtDollars(p.total_sales_tax_city)}</td></tr>
         </table>
-        <div class="note">*One-time, contingent on sale/reassessment (Prop 13)</div>
+        <div class="note">*One-time, contingent on sale/reassessment (Prop 13). "City's cut" = the 2 of 8.75 combined sales-tax points that go to the city's own General/Measure U Fund (1% Bradley-Burns + 1% Measure U) — the rest goes to the state, county, and other special districts.</div>
       </div>`;
   }
 
@@ -189,6 +246,16 @@
       s.style.background = hex;
       ramp.appendChild(s);
     });
+    document.getElementById("metricNote").textContent = m.note;
+  }
+
+  function renderCallout() {
+    if (!CITYWIDE_DATA) return;
+    document.getElementById("calloutSalesTax").textContent = fmtDollars(CITYWIDE_DATA.total_sales_tax_total);
+    document.getElementById("calloutSalesTaxCity").textContent = fmtDollars(CITYWIDE_DATA.total_sales_tax_city);
+    document.getElementById("calloutPropTax").textContent = fmtDollars(CITYWIDE_DATA.total_property_tax_uplift);
+    document.getElementById("calloutCounts").textContent =
+      CITYWIDE_DATA.commercial_eligible_count.toLocaleString() + " / " + CITYWIDE_DATA.vacant_count.toLocaleString();
   }
 
   function applyMetric() {
@@ -223,6 +290,7 @@
     }).addTo(map);
 
     renderLegend();
+    renderCallout();
   } catch (err) {
     document.getElementById("loading").textContent = "Couldn't render vacancy data.";
     console.error(err);

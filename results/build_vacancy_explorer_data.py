@@ -10,15 +10,24 @@ both block groups and council districts.
 Run after ca_property_estimator/scripts/export_vacancy_fee_estimates.py and
 revenue_impact/estimate_lost_revenue.py.
 
+Choropleth metrics: vacant parcel count, potential property tax uplift, est.
+annual sales tax lost, and two "hoarding" proxies -- median years since last
+sale (49% of parcels have a recorded sale date) and median market-value/
+assessed-value ratio (a Prop 13 proxy for the same thing, available wherever
+we have both values: the longer a parcel goes without a reassessment-
+triggering sale, the further its market value drifts from its capped
+2%/yr-growth assessed base).
+
 Outputs (all tracked -- small):
-    map_data/block_groups_vacancy.json      -- choropleth: vacant count + revenue per block group
+    map_data/block_groups_vacancy.json      -- choropleth: vacant count + revenue + hoarding per block group
     map_data/council_districts_revenue.json -- district outlines + revenue, for the overlay
-    vacancy_explorer.html                   -- vacancy_explorer_template.html with both
-                                                JSON files inlined, so the page opens by
-                                                double-click (no server, no CORS issue) and
-                                                is still a single self-contained file to host
-                                                for iframe embedding. Edit the *template*, not
-                                                this file directly -- it's overwritten on every run.
+    vacancy_explorer.html                   -- vacancy_explorer_template.html with the above
+                                                plus a citywide totals summary inlined, so the
+                                                page opens by double-click (no server, no CORS
+                                                issue) and is still a single self-contained file
+                                                to host for iframe embedding. Edit the *template*,
+                                                not this file directly -- it's overwritten on
+                                                every run.
 
 NOTE on granularity: true Census blocks (TABBLOCK20) are far too fine for a
 citywide choropleth -- Sacramento city has on the order of 10-15K of them,
@@ -96,22 +105,32 @@ def aggregate_to_block_groups(block_groups: gpd.GeoDataFrame, parcels: pd.DataFr
         total_property_tax_uplift=("potential_property_tax_uplift", "sum"),
         total_sales_tax_total=("estimated_annual_sales_tax_total", "sum"),
         total_sales_tax_city=("estimated_annual_sales_tax_city", "sum"),
+        # Hoarding signals -- medians, not sums (these are per-parcel rates/
+        # durations, not additive dollars). NaN parcels (no recorded sale
+        # date, or no assessed value to form a ratio) drop out of the median
+        # rather than pulling it toward zero.
+        median_years_since_sale=("years_since_sale", "median"),
+        median_market_assessed_ratio=("market_assessed_ratio", "median"),
+        n_with_sale_date=("years_since_sale", "count"),
     ).reset_index()
 
     out = block_groups.merge(agg, on="GEOID", how="left")
     for col in ("vacant_count", "commercial_eligible_count", "total_prop13_gap",
-                "total_property_tax_uplift", "total_sales_tax_total", "total_sales_tax_city"):
+                "total_property_tax_uplift", "total_sales_tax_total", "total_sales_tax_city",
+                "n_with_sale_date"):
         out[col] = out[col].fillna(0)
     return out
 
 
 # Metrics the explorer page can color the choropleth by (dropdown toggle).
-# Colors for all three are precomputed here so the browser only ever swaps
+# Colors for all five are precomputed here so the browser only ever swaps
 # which property it reads -- no client-side rebinning.
 CHOROPLETH_METRICS = {
     "vacant_count": "fill_color_count",
     "total_property_tax_uplift": "fill_color_proptax",
     "total_sales_tax_total": "fill_color_salestax",
+    "median_years_since_sale": "fill_color_yrssale",
+    "median_market_assessed_ratio": "fill_color_ratio",
 }
 
 
@@ -138,13 +157,17 @@ def write_block_groups_json(block_groups: gpd.GeoDataFrame) -> str:
     cols = [
         "GEOID", "vacant_count", "commercial_eligible_count", "total_prop13_gap",
         "total_property_tax_uplift", "total_sales_tax_total", "total_sales_tax_city",
-        "fill_color_count", "fill_color_proptax", "fill_color_salestax", "geometry",
+        "median_years_since_sale", "median_market_assessed_ratio", "n_with_sale_date",
+        "fill_color_count", "fill_color_proptax", "fill_color_salestax",
+        "fill_color_yrssale", "fill_color_ratio", "geometry",
     ]
     out = block_groups[cols].copy()
-    for col in ("vacant_count", "commercial_eligible_count"):
+    for col in ("vacant_count", "commercial_eligible_count", "n_with_sale_date"):
         out[col] = out[col].astype(int)
     for col in ("total_prop13_gap", "total_property_tax_uplift", "total_sales_tax_total", "total_sales_tax_city"):
         out[col] = out[col].round(0).astype(int)
+    for col in ("median_years_since_sale", "median_market_assessed_ratio"):
+        out[col] = out[col].round(1)
 
     geojson_str = out.to_json(drop_id=True)
     target = MAP_DATA_DIR / "block_groups_vacancy.json"
@@ -180,11 +203,28 @@ def write_districts_json(districts: gpd.GeoDataFrame, district_summary: pd.DataF
     return geojson_str
 
 
-def write_html(block_groups_json: str, districts_json: str) -> None:
+def build_citywide_totals(district_summary: pd.DataFrame) -> str:
+    """Small JSON blob for the map's callout box -- citywide, city-limits only."""
+    totals = district_summary[
+        ["vacant_parcels", "commercial_eligible_parcels", "total_potential_property_tax_uplift",
+         "total_estimated_annual_sales_tax_total", "total_estimated_annual_sales_tax_city"]
+    ].sum()
+    payload = {
+        "vacant_count": int(totals["vacant_parcels"]),
+        "commercial_eligible_count": int(totals["commercial_eligible_parcels"]),
+        "total_property_tax_uplift": int(round(totals["total_potential_property_tax_uplift"])),
+        "total_sales_tax_total": int(round(totals["total_estimated_annual_sales_tax_total"])),
+        "total_sales_tax_city": int(round(totals["total_estimated_annual_sales_tax_city"])),
+    }
+    return pd.Series(payload).to_json()
+
+
+def write_html(block_groups_json: str, districts_json: str, citywide_json: str) -> None:
     template_path = RESULTS_DIR / "vacancy_explorer_template.html"
     html = template_path.read_text()
     html = html.replace("/*__BLOCK_GROUPS_JSON__*/ null", block_groups_json)
     html = html.replace("/*__DISTRICTS_JSON__*/ null", districts_json)
+    html = html.replace("/*__CITYWIDE_JSON__*/ null", citywide_json)
 
     target = RESULTS_DIR / "vacancy_explorer.html"
     target.write_text(html)
@@ -202,7 +242,7 @@ def main() -> None:
         PARCEL_REVENUE_CSV,
         usecols=["PARCEL_APN", "LATITUDE", "LONGITUDE", "commercial_eligible", "prop13_gap",
                  "potential_property_tax_uplift", "estimated_annual_sales_tax_total",
-                 "estimated_annual_sales_tax_city"],
+                 "estimated_annual_sales_tax_city", "years_since_sale", "market_assessed_ratio"],
     )
     districts = gpd.read_file(DISTRICTS_GEOJSON)
 
@@ -217,8 +257,9 @@ def main() -> None:
     district_summary = pd.read_csv(DISTRICT_SUMMARY_CSV, index_col=0).reset_index(names="council_district")
     district_summary = district_summary[district_summary["council_district"] != "CITYWIDE TOTAL"]
     districts_json = write_districts_json(districts, district_summary)
+    citywide_json = build_citywide_totals(district_summary)
 
-    write_html(block_groups_json, districts_json)
+    write_html(block_groups_json, districts_json, citywide_json)
 
 
 if __name__ == "__main__":

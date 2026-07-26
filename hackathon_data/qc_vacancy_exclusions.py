@@ -1,8 +1,8 @@
 """
 QC: known false-positive categories in vacant_parcels
 ===============================================================================
-Three independent, unrelated checks against the same list, each catching a
-different way a non-vacant parcel slips into vacant_parcels.csv:
+Three independent checks against the same list, each catching a different way
+a non-vacant (or non-vacancy-tax-eligible) parcel slips into vacant_parcels.csv:
 
 1. Public park/recreation-agency ownership. CLAUDE.md documents Tier 2
    ("Zero Improvement") as excluding parks, but the exclusion isn't actually
@@ -10,35 +10,37 @@ different way a non-vacant parcel slips into vacant_parcels.csv:
    improvement value and reads identically to a vacant lot to the
    zero-improvement heuristic.
 
-2. Occupied structures miscoded zero-improvement. VAL_ASSD_IMPRV is *null*
-   (not recorded as literally $0) for every single Tier 2 row -- the
-   classification treats missing improvement-value data as zero. 14% of
-   Tier 2 (1,255 of 8,976 parcels) show direct structural evidence --
-   building sqft, living sqft, bedroom count, or a year-built -- that
-   contradicts "zero improvement." The single biggest category is coded
-   SINGLE FAMILY RESIDENTIAL (646 of those 1,255); sampled by hand, several
-   are recently-sold occupied homes (e.g. a 2017-built 4BR that sold in
-   2022) and City of Sacramento Housing Authority-owned public housing built
-   2008. Tier 1 (land-use-code based, not improvement-value based) doesn't
-   have this problem: only 2 of 19,295 show any structural evidence.
+2. Tier 2/3 rows whose OWN use code says a structure/active use exists.
+   VAL_ASSD_IMPRV is *null* -- not recorded as literally $0 -- for every
+   single Tier 2 row: the classification treats missing improvement-value
+   data as zero, county-wide, for every use type. Of the ~91 distinct use
+   codes remaining in Tier 2/3, the overwhelming majority are specific
+   building/business types -- OFFICE BLDG (MULTI-STORY), APARTMENTS,
+   HOTEL, RESTAURANT, MEDICAL BLDG/CLINIC, WAREHOUSE, GAS STATION, BANK,
+   GOLF COURSE, and dozens more -- not "vacant land" by any description.
+   Checking for stray structural fields (BUILDING_SQFT etc.) still isn't
+   enough on its own: tax-exempt government parcels routinely have *every*
+   field null (55 of 56 "PARKING GARAGE, PARKING STRUCTURE" parcels turned
+   out to be actual downtown Sacramento public garages with zero structural
+   fields captured at all -- see git history for that narrower, superseded
+   version of this check). The robust fix is the other direction: keep an
+   explicit allowlist of use codes that actually mean "no structure" --
+   VACANT_LAND_USE_CODES below -- and treat everything else in Tier 2/3 as
+   miscoded. Tier 1 (land-use-code based, not improvement-value based)
+   doesn't have this problem and isn't touched: only 2 of 19,295 Tier 1
+   parcels show any structural evidence in the first place.
 
-3. Inherently active uses that check 2 still misses, because tax-exempt
-   government parcels often have EVERY structural field null (private
-   property gets appraised in more detail than exempt property does): 55 of
-   56 "PARKING GARAGE, PARKING STRUCTURE" parcels are actual downtown
-   Sacramento public parking garages (City/County/State/community-college-
-   district owned) with no BUILDING_SQFT captured at all. Same story for
-   "AIRPORT & RELATED" (County of Sacramento, on streets literally named
-   Earhart Dr / Lindbergh Dr) and "CEMETERY (EXEMPT)". These three use codes
-   describe a use that cannot be "vacant" by definition, unlike offices,
-   retail, or golf courses, which legitimately can sit empty/closed and are
-   exactly what "vacant building" fee policy targets -- deliberately not
-   swept in here.
+3. Parking lots, in every tier. Not vacant land -- an operating surface lot
+   is paved, in-use commercial property -- and per the campaign's own call,
+   not something a vacancy tax would apply to regardless. This empties out
+   Tier 3 ("Parking/Abandoned") almost entirely: it turns out to be 100%
+   parking lots (BFH-coded) in this dataset, with zero abandoned service
+   stations (BFK) actually present despite the tier's name.
 
-All three are downstream QC passes, not fixes to the classification itself
--- the script that builds vacant_parcels.csv (build_hackathon_data.py) isn't
-in this repo. Produces a corrected export plus a small audit report of what
-got removed and why, so a human can sanity-check the matches before they're
+All three are downstream QC passes, not fixes to the classification itself -- the
+script that builds vacant_parcels.csv (build_hackathon_data.py) isn't in
+this repo. Produces a corrected export plus a small audit report of what got
+removed and why, so a human can sanity-check the matches before they're
 relied on publicly.
 
 Usage:
@@ -91,60 +93,68 @@ def is_public_park_owner(owner_name) -> bool:
     return bool(_STATE_AGENCY_PATTERN.search(o))
 
 
-# ── Check 2: occupied structure despite "zero improvement" ──────────────────
-# Only applied to Tier 2/3 -- Tier 1 (land-use-code based) is already clean
-# (2 of 19,295 show any structural evidence) and this signal doesn't apply to
-# how Tier 1 is derived in the first place.
+# ── Check 2: Tier 2/3 rows whose use code isn't actually "vacant land" ──────
+# Only applied to Tier 2/3 -- Tier 1 (land-use-code based) is already clean.
+# This is an ALLOWLIST, not a blocklist: anything in Tier 2/3 whose use code
+# isn't one of these is treated as miscoded, on the theory that "vacant" use
+# codes are a short, enumerable list and "not vacant" use codes are not (see
+# module docstring). Reviewed against the full distinct list of what's
+# actually in the data -- see qc_exclusion_report.csv after running this.
 STRUCTURAL_EVIDENCE_TIERS = {"Tier 2: Zero Improvement", "Tier 3: Parking/Abandoned"}
 
-
-def has_structural_evidence(row) -> bool:
-    if row.get("vacancy_tier") not in STRUCTURAL_EVIDENCE_TIERS:
-        return False
-    for col in ("BUILDING_SQFT", "LIVING_SQFT", "BEDROOMS"):
-        val = row.get(col)
-        if pd.notna(val) and val > 0:
-            return True
-    return pd.notna(row.get("YR_BLT"))
-
-
-# ── Check 3: inherently active uses, regardless of missing field data ───────
-# Government-owned parcels are tax-exempt, so BUILDING_SQFT/YR_BLT/etc. are
-# often never captured for them (unlike private property) -- 55 of 56
-# "PARKING GARAGE, PARKING STRUCTURE" parcels have every structural field
-# null and would sail past check 2, despite being active City/County/State/
-# community-college-district parking garages (725 7th St, 1000 I St, etc. --
-# downtown Sacramento's actual public parking garages). Same story for
-# "AIRPORT & RELATED" (County of Sacramento, on streets literally named
-# Earhart Dr / Lindbergh Dr -- Sacramento Executive Airport) and "CEMETERY
-# (EXEMPT)" (cemetery districts, the U.S. government, the Catholic diocese).
-# Deliberately NOT extended to ambiguous categories like offices, retail, or
-# golf courses -- those legitimately CAN sit vacant/closed and are exactly
-# what "vacant building" fee policy targets; a parking structure, airport, or
-# cemetery cannot be "vacant" in that sense by definition of the use itself.
-INHERENTLY_ACTIVE_USES = {
-    "PARKING GARAGE, PARKING STRUCTURE",
-    "AIRPORT & RELATED",
-    "CEMETERY (EXEMPT)",
+VACANT_LAND_USE_CODES = {
+    "RESIDENTIAL-VACANT LAND",
+    "COMMERCIAL-VACANT LAND",
+    "INDUSTRIAL-VACANT LAND",
+    "RURAL/AGRICULTURAL-VACANT LAND",
+    "RECREATIONAL-VACANT LAND",
+    "INSTITUTIONAL-VACANT LAND",
+    "VACANT LAND (GENERAL)",
+    "WASTE LAND, MARSH, SWAMP, SUBMERGED-VACANT LAND",
+    "PRIVATE PRESERVE, OPEN SPACE-VACANT LAND (FOREST LAND, CONSERVATION)",
+    "QUARRIES (SAND; GRAVEL; ROCK)",       # extraction pit, no structure
+    "STORAGE YARD (JUNK; AUTO WRECKING, SALVAGE)",       # outdoor yard, no building
+    "STORAGE YARD, OPEN STORAGE (LIGHT EQUIPMENT, MATERIAL)",
+    "MISCELLANEOUS (GENERAL)",
 }
 
 
-def is_inherently_active_use(row) -> bool:
+def is_miscoded_not_vacant_land(row) -> bool:
     if row.get("vacancy_tier") not in STRUCTURAL_EVIDENCE_TIERS:
         return False
-    return row.get("USE_CODE_STD_DESC_LPS") in INHERENTLY_ACTIVE_USES
+    use_code = row.get("USE_CODE_STD_DESC_LPS")
+    if not isinstance(use_code, str):
+        return False  # missing use code -- not enough to call it miscoded either way
+    return use_code not in VACANT_LAND_USE_CODES
+
+
+# ── Check 3: parking lots -- not a vacancy-tax target, regardless of tier ───
+# An operating (or even unstriped/informal) surface parking lot is a paved,
+# in-use commercial property, not vacant land, and per the campaign's own
+# call isn't something a vacancy tax would apply to. This used to sit in the
+# VACANT_LAND_USE_CODES allowlist above (reasoning: "paved, no building") --
+# moved to its own check because the exclusion reason is a policy judgment
+# about tax eligibility, not a data-quality claim about whether a structure
+# exists. Applies across every tier: Tier 3 ("Parking/Abandoned") in this
+# dataset turns out to be 100% parking lots (BFH-coded) with zero abandoned
+# service stations (BFK) actually present, so this check empties Tier 3 out
+# entirely as a side effect, not just trims Tier 2.
+def is_parking_lot(row) -> bool:
+    return row.get("USE_CODE_STD_DESC_LPS") == "PARKING LOT"
 
 
 def classify(df: pd.DataFrame) -> pd.Series:
     """Return an exclusion reason per row, or None if not excluded."""
     reasons = pd.Series(None, index=df.index, dtype=object)
     reasons[df["ASSESSEE_OWNER_NAME_1"].apply(is_public_park_owner)] = "public_park_or_recreation_agency"
-    structural = df.apply(has_structural_evidence, axis=1)
-    active_use = df.apply(is_inherently_active_use, axis=1)
-    # Don't overwrite a park reason that also happens to show structural
-    # evidence (e.g. a park building) -- keep the more specific park reason.
-    reasons[structural & reasons.isna()] = "occupied_structure_missing_improvement_data"
-    reasons[active_use & reasons.isna()] = "inherently_active_use_parking_airport_cemetery"
+    # Parking lots before the general miscoded-use-code check: PARKING LOT
+    # isn't in VACANT_LAND_USE_CODES, so check 2 would also match it and
+    # mislabel it "implies structure" -- it doesn't, the real reason is
+    # policy/tax-eligibility (check 3), and that label should win.
+    parking = df.apply(is_parking_lot, axis=1)
+    reasons[parking & reasons.isna()] = "parking_lot_not_vacancy_tax_eligible"
+    miscoded = df.apply(is_miscoded_not_vacant_land, axis=1)
+    reasons[miscoded & reasons.isna()] = "use_code_implies_structure_not_vacant_land"
     return reasons
 
 

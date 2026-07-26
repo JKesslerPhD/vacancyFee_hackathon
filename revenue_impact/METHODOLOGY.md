@@ -15,6 +15,36 @@ should never be added together without saying so:
   lot sits empty instead of housing a business, that's real foregone taxable
   sales, no reassessment trigger required.
 
+## Sanity cap on est_market_value (applied before everything below)
+
+`ca_property_estimator`'s land-value model produces a small but consequential
+share of wildly implausible estimates. The clearest evidence: **1,662
+parcels — scattered across residential-vacant, industrial-vacant, and
+waste/marsh land, with no relationship to each other — all price out to the
+literal same rate, $7,107.14/sqft**, agreeing to 4-5 decimal places. That
+isn't market variation; it's a broken fallback/default constant firing
+inside the model for parcels it can't otherwise price. Left uncapped, these
+dominate every downstream total: pre-cap, the single largest parcel (a
+<1-acre "COMMERCIAL-VACANT LAND" lot assessed at $405K) priced out to
+**$276 million**, 67% of its entire council district's sales-tax estimate on
+its own, and the top 10 of ~900 commercial-eligible parcels citywide made up
+56% of the citywide sales-tax total.
+
+`cap_market_value()` winsorizes `est_market_value` at **$500/sqft** of
+`LOT_SIZE_AREA` (falling back to 100× `VAL_ASSD` for the ~2.6% of parcels
+missing lot size). $500/sqft sits comfortably above the 90th percentile of
+the model's own non-broken output (~$105–270/sqft citywide, depending on
+exactly where you slice it) and just as comfortably below the $7,107/sqft
+cluster — there's a clean, empty gap in the data between roughly $270 and
+$7,000/sqft, so the exact cap value isn't sensitive within that range. This
+capped 2,702 of ~27,000 vacant parcels citywide and removed **$115B** in
+phantom valuation, dropping the citywide headline totals roughly 7-8x (from
+~$301M to ~$39M property tax uplift; ~$258M to ~$38M annual sales tax) —
+a large swing, but in the direction of *removing* a fabrication, not
+introducing one. `est_market_value_uncapped` is preserved in
+`parcel_revenue_estimates.csv` for anyone who wants to audit exactly which
+parcels were capped and by how much.
+
 ## Property tax uplift
 
 ```
@@ -99,9 +129,11 @@ this module's entire output.
   parcel-specific fact — see the constants at the top of
   `estimate_lost_revenue.py` to substitute your own assumptions.
 - `est_market_value` inherits `ca_property_estimator`'s known issue with a
-  handful of implausibly low vacant-land estimates (see the parent PR's
-  README note); those parcels will understate both the property-tax gap and
-  imputed rent for the sales-tax estimate.
+  handful of implausibly *low* vacant-land estimates too (see the parent
+  PR's README note) — the opposite direction from the $7,107/sqft cluster
+  capped above, and not something a ceiling can fix. Those parcels will
+  understate both the property-tax gap and imputed rent for the sales-tax
+  estimate.
 - The commercial/retail filter is a text match on the assessor's own
   `USE_CODE_STD_DESC_LPS`, not a legal zoning determination — parcels with
   ambiguous or missing use codes fall out of the sales-tax estimate even if

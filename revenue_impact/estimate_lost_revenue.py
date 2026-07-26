@@ -12,6 +12,14 @@ differently -- never sum them into one number:
   * Sales tax: a genuine RECURRING annual loss, for vacant parcels zoned/used
     commercial or retail only.
 
+Both are computed from a market-value estimate that gets a sanity cap first
+(see cap_market_value()) -- ca_property_estimator produces a small number of
+wildly implausible outliers (one <1-acre "COMMERCIAL-VACANT LAND" parcel
+priced at $276M, a $7,100+/sqft rate against a $32/sqft citywide median) that
+without capping dominate the totals: pre-cap, the top 10 of ~900
+commercial-eligible parcels accounted for 56% of the entire citywide sales
+tax estimate, badly distorting any district-level or block-group comparison.
+
 Inputs:
     ../hackathon_data/vacant_parcels_qc.csv
         (park-excluded vacant parcel list -- run
@@ -53,6 +61,16 @@ OCCUPANCY_COST_RATIO = 0.08        # rent as a share of gross sales -> implies r
 SALES_TAX_RATE_TOTAL = 0.0875      # combined state+county+city+district
 SALES_TAX_RATE_CITY = 0.02         # city-specific share (1% Bradley-Burns + 1% Measure U)
 
+# Sanity cap on est_market_value -- see module docstring and METHODOLOGY.md.
+# $500/sqft sits well above the 90th percentile of the model's own
+# non-outlier output (~$105/sqft citywide) and well below the anomalous
+# cluster it produces for a subset of parcels (~$7,100+/sqft) -- there's a
+# clean gap in the data between those two numbers, so the exact cap value
+# isn't sensitive within that range. Falls back to a multiple of assessed
+# value for the ~2.6% of parcels missing LOT_SIZE_AREA.
+MAX_DOLLAR_PER_SQFT = 500
+FALLBACK_ASSESSED_MULTIPLE = 100   # used only when LOT_SIZE_AREA is missing
+
 COMMERCIAL_USE_PATTERN = re.compile(r"COMMERCIAL|RETAIL")
 
 
@@ -67,7 +85,8 @@ def load_parcels() -> pd.DataFrame:
 
     vacant = pd.read_csv(
         VACANT_CSV,
-        usecols=["PARCEL_APN", "LATITUDE", "LONGITUDE", "VAL_ASSD", "USE_CODE_STD_DESC_LPS", "vacancy_tier"],
+        usecols=["PARCEL_APN", "LATITUDE", "LONGITUDE", "VAL_ASSD", "USE_CODE_STD_DESC_LPS",
+                 "vacancy_tier", "LOT_SIZE_AREA", "LAST_SALE_DATE_TRANSFER"],
         dtype={"PARCEL_APN": str},
         low_memory=False,
     )
@@ -86,9 +105,33 @@ def load_parcels() -> pd.DataFrame:
     return df
 
 
+def cap_market_value(df: pd.DataFrame) -> pd.DataFrame:
+    """Winsorize est_market_value against a $/sqft ceiling; see module docstring."""
+    df = df.copy()
+    df["est_market_value_uncapped"] = df["est_market_value"]
+
+    has_lot = df["LOT_SIZE_AREA"].fillna(0) > 0
+    per_sqft_cap = df["LOT_SIZE_AREA"] * MAX_DOLLAR_PER_SQFT
+    assessed_cap = df["VAL_ASSD"].fillna(0) * FALLBACK_ASSESSED_MULTIPLE
+
+    cap = np.where(has_lot, per_sqft_cap, assessed_cap)
+    capped_mask = df["est_market_value"].fillna(0) > cap
+    df["est_market_value"] = np.where(capped_mask, cap, df["est_market_value"])
+
+    n_capped = int(capped_mask.sum())
+    if n_capped:
+        removed = (df.loc[capped_mask, "est_market_value_uncapped"] - df.loc[capped_mask, "est_market_value"]).sum()
+        print(f"capped {n_capped:,} parcels with implausible est_market_value "
+              f"(removed ${removed / 1e9:.1f}B in phantom valuation)")
+    return df
+
+
 def compute_revenue(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df["prop13_gap"] = df["prop13_benefit"].fillna(0).clip(lower=0)
+    # Recompute prop13_gap from the capped estimate rather than trusting
+    # prop13_benefit from the CA estimator export, which was computed
+    # pre-cap.
+    df["prop13_gap"] = (df["est_market_value"] - df["VAL_ASSD"].fillna(0)).clip(lower=0)
     df["potential_property_tax_uplift"] = df["prop13_gap"] * PROPERTY_TAX_RATE
 
     is_commercial = df["USE_CODE_STD_DESC_LPS"].fillna("").str.upper().str.contains(COMMERCIAL_USE_PATTERN)
@@ -99,6 +142,17 @@ def compute_revenue(df: pd.DataFrame) -> pd.DataFrame:
     df["estimated_annual_business_revenue"] = np.where(is_commercial, imputed_revenue, 0.0)
     df["estimated_annual_sales_tax_total"] = df["estimated_annual_business_revenue"] * SALES_TAX_RATE_TOTAL
     df["estimated_annual_sales_tax_city"] = df["estimated_annual_business_revenue"] * SALES_TAX_RATE_CITY
+
+    # Hoarding signals -- see the vacancy_explorer choropleth's "hoarding"
+    # metrics. Years since last sale is a direct hold-time read (49% of
+    # parcels have a recorded sale date); market/assessed ratio is a Prop 13
+    # proxy for the same thing (available wherever we have both values) --
+    # the longer a parcel goes without a reassessment-triggering sale, the
+    # further its market value drifts from its capped 2%/yr assessed base.
+    sale_date = pd.to_datetime(df["LAST_SALE_DATE_TRANSFER"], format="%Y%m%d", errors="coerce")
+    df["years_since_sale"] = (pd.Timestamp.now() - sale_date).dt.days / 365.25
+    assessed = df["VAL_ASSD"].replace(0, np.nan)
+    df["market_assessed_ratio"] = df["est_market_value"] / assessed
 
     return df
 
@@ -183,6 +237,7 @@ def plot_summary(summary: pd.DataFrame) -> None:
 
 def main() -> None:
     df = load_parcels()
+    df = cap_market_value(df)
     df = compute_revenue(df)
     df = assign_council_district(df)
 

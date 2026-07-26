@@ -1,50 +1,50 @@
 [
   {
     "city": "SACRAMENTO",
-    "parcels": 11539,
-    "market_billions": 39.9,
-    "gap_billions": 39.36
+    "parcels": 9501,
+    "market_billions": 35.35,
+    "gap_billions": 34.98
   },
   {
     "city": "ELK GROVE",
-    "parcels": 3605,
-    "market_billions": 19.34,
-    "gap_billions": 19.3
+    "parcels": 3532,
+    "market_billions": 18.81,
+    "gap_billions": 18.77
   },
   {
     "city": "RANCHO CORDOVA",
-    "parcels": 2829,
-    "market_billions": 2.87,
-    "gap_billions": 2.84
+    "parcels": 2780,
+    "market_billions": 2.83,
+    "gap_billions": 2.81
   },
   {
     "city": "FOLSOM",
-    "parcels": 1996,
-    "market_billions": 5.01,
-    "gap_billions": 4.95
+    "parcels": 1925,
+    "market_billions": 4.61,
+    "gap_billions": 4.55
   },
   {
     "city": "GALT",
-    "parcels": 864,
-    "market_billions": 5.44,
-    "gap_billions": 5.42
+    "parcels": 833,
+    "market_billions": 4.9,
+    "gap_billions": 4.88
   },
   {
     "city": "ANTELOPE",
-    "parcels": 603,
+    "parcels": 598,
     "market_billions": 6.6,
     "gap_billions": 6.6
   },
   {
-    "city": "CARMICHAEL",
-    "parcels": 552,
-    "market_billions": 1.52,
-    "gap_billions": 1.49
+    "city": "FAIR OAKS",
+    "parcels": 471,
+    "market_billions": 1.03,
+    "gap_billions": 1.0
   },
   {
-    "city": "FAIR OAKS",
-    "parcels": 517,
-    "market_billions": 1.04,
-    "gap_billions": 1.01
+    "city": "CARMICHAEL",
+    "parcels": 466,
+    "market_billions": 1.51,
+    "gap_billions": 1.48
   }
 ]
