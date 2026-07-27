@@ -17,65 +17,99 @@ should never be added together without saying so:
 
 ## Data refresh (2026-07-26)
 
-The parcel cache and every dollar figure in this file were rebuilt after
-fixing a bug in `ca_property_estimator/src/data_loader.py`'s `build_query()`:
-the per-parcel scoring query included `AND DUPLICATE_SUMS = FALSE`, which
-silently dropped every parcel flagged as a duplicate-sum record from the
-full statewide pull, not just from the aggregate stats where that flag is
-meant to apply. Multi-unit buildings and condo associations were hit
-hardest. The clearest local example: 2417 J St in Sacramento, a highrise
-apartment building, used to split into a dozen-plus fragmentary records
-with nonsensical assessed values (several under $1,000, one at $10) instead
-of resolving to its two real APNs. The fixed query recovered 45,724
-previously-dropped parcels statewide (10,229,180 rows total), and 2417 J St
-now resolves cleanly to APNs 00700320240000 and 00700320260000.
+Two rounds of fixes landed the same day. Both changed the totals below but
+not the underlying methodology.
 
-This changed the totals below but not the underlying methodology. Current
-run: 24,077 countywide vacant parcels (23,143 matched a market-value
-estimate), 6,518 within Sacramento city limits, 1,487 of those capped by
-`cap_market_value()` (removing $6.9B in phantom valuation from the city
-subset). Citywide headline totals: **$34.8M** potential property tax
-uplift, **$63.5M** annual sales tax across all jurisdictions, **$14.5M** of
-that as the city's own share. District 3: 486 vacant parcels, $1.7M
-potential uplift, $4.6M annual sales tax total / $1.05M city share.
+### Round 1: DUPLICATE_SUMS + SITE_STATE, in ca_property_estimator
 
-The specific illustrative numbers in the "Sanity cap" section right below
-(the $7,107.14/sqft cluster, the $276M parcel, the 2,702-parcel count) were
-measured on the pre-fix run and haven't been individually re-checked
-against the new cache. The capping mechanism they describe is unchanged
-and still active — a spot check on the current city subset shows the same
-pattern (an industrial-vacant parcel modeling out to $158M pre-cap, cut to
-$21.6M), just not re-verified figure by figure.
+Fixed two bugs in `ca_property_estimator/src/data_loader.py`'s
+`build_query()` (the query that pulls every California parcel from
+Snowflake for scoring):
+
+- **`DUPLICATE_SUMS`.** The query included `AND DUPLICATE_SUMS = FALSE`,
+  which silently dropped every parcel flagged as a duplicate-sum record
+  from the full pull, not just from the aggregate stats where that flag is
+  meant to apply. Multi-unit buildings and condo associations were hit
+  hardest. Recovered 45,724 parcels statewide. The clearest local example:
+  2417 J St in Sacramento, a highrise apartment building, used to split
+  into a dozen-plus fragmentary records with nonsensical assessed values
+  (several under $1,000, one at $10) instead of resolving to its two real
+  APNs (00700320240000 and 00700320260000).
+- **`SITE_STATE`.** The query filtered `WHERE SITE_STATE = 'CA'`, but
+  1,253,699 genuine California parcels statewide (~11% of the table) have
+  `SITE_STATE` NULL despite every one of them having a California
+  `FIPS_CODE` (state prefix `06`) -- confirmed by cross-checking
+  `COUNTYNAME`/`FIPS_CODE` for all of them. A handful of rows even had
+  `SITE_STATE = 'OR'` while geocoded in Modoc County, CA -- a straight
+  data-entry error. Switched the filter to `LEFT(FIPS_CODE, 2) = '06'`,
+  a strict superset (every `SITE_STATE = 'CA'` row already has that FIPS
+  prefix, zero exceptions). Recovered 1,253,721 parcels statewide
+  (11,482,901 rows total after both fixes, up from 10,229,180).
+
+### Round 2: two gaps in the vacant-parcel classification itself
+
+Recovering all those parcels meant `est_market_value` successfully matched
+to thousands of Sacramento parcels that had never had a value joined to
+them before -- which surfaced two pre-existing gaps in
+`hackathon_data/qc_vacancy_exclusions.py` and
+`hackathon_data/build_predicted_vacancy_tier.py` that had been silently
+contributing $0 to every total until parcels actually had a dollar value to
+contribute:
+
+- **Tier 4 ("Predicted (311 Signal)") never went through the use-code
+  allowlist.** Tier 4 rows are appended to `vacant_parcels_qc.csv` by
+  `build_predicted_vacancy_tier.py` *after* `qc_vacancy_exclusions.py`
+  runs, so they never passed through that script's existing
+  miscoded-use-code check at all, despite being a noisier, model-predicted
+  signal that arguably needs *more* scrutiny than the coded tiers, not
+  less. Of 7,083 Tier 4 candidates, 7,075 (99.9%) had a use code implying a
+  real, occupied structure -- department stores, high-rise apartments,
+  offices, a theater -- because large, busy, occupied buildings generate
+  plenty of 311 calls for reasons that have nothing to do with vacancy.
+  This one gap accounted for 77.5% of the citywide sales-tax estimate and
+  53.2% of the property-tax uplift estimate in an intermediate run. Fixed
+  by applying the same allowlist `qc_vacancy_exclusions.py` already trusts
+  for Tier 2/3, inside `build_predicted_vacancy_tier.py`, before appending.
+- **Tier 1 ("Coded Vacant") wasn't stale-checked.** Tier 1 trusts the
+  county's LANDUSE code as of whenever `vacant_parcels.csv` was last built,
+  and Sacramento is an actively growing county. Cross-checking every Tier 1
+  APN against the *current* LANDUSE code in `data/sac_county_parcel_
+  assessors.gpkg` found 4,716 of 19,295 (24%) no longer start with `I`
+  (vacant) -- 4,661 of those now show `LU_GENERAL` "Residential", the
+  fingerprint of a lot that's since been subdivided and built into homes.
+  Smaller impact than the Tier 4 fix ($2.99M of citywide sales tax, $623K
+  of property-tax uplift, pre-fix) but a real, verified staleness gap.
+  Fixed with a new check 4 in `qc_vacancy_exclusions.py`.
+
+### Current totals
+
+19,369 countywide vacant parcels (19,368 matched a market-value estimate),
+5,862 within Sacramento city limits, 1,154 of those capped by
+`cap_market_value()` (removing $7.9B in phantom valuation from the city
+subset). Citywide headline totals: **$39.2M** potential property tax
+uplift, **$71.0M** annual sales tax across all jurisdictions, **$16.2M** of
+that as the city's own share. District 3: 478 vacant parcels, $1.7M
+potential uplift, $3.8M annual sales tax total / $857K city share.
 
 ## Sanity cap on est_market_value (applied before everything below)
 
 `ca_property_estimator`'s land-value model produces a small but consequential
-share of wildly implausible estimates. The clearest evidence: **1,662
-parcels — scattered across residential-vacant, industrial-vacant, and
-waste/marsh land, with no relationship to each other — all price out to the
-literal same rate, $7,107.14/sqft**, agreeing to 4-5 decimal places. That
-isn't market variation; it's a broken fallback/default constant firing
-inside the model for parcels it can't otherwise price. Left uncapped, these
-dominate every downstream total: pre-cap, the single largest parcel (a
-<1-acre "COMMERCIAL-VACANT LAND" lot assessed at $405K) priced out to
-**$276 million**, 67% of its entire council district's sales-tax estimate on
-its own, and the top 10 of ~900 commercial-eligible parcels citywide made up
-56% of the citywide sales-tax total.
+share of wildly implausible estimates -- a broken fallback/default constant
+firing inside the model for parcels it can't otherwise price cleanly. Left
+uncapped, these dominate every downstream total: pre-cap, the single
+largest parcel in the current city-limited run (a ~1-acre
+"INDUSTRIAL-VACANT LAND" lot assessed at $148,960) prices out to
+**$176.7 million**, a ~$4,088/sqft rate against a citywide median closer to
+$100/sqft.
 
 `cap_market_value()` winsorizes `est_market_value` at **$500/sqft** of
-`LOT_SIZE_AREA` (falling back to 100× `VAL_ASSD` for the ~2.6% of parcels
-missing lot size). $500/sqft sits comfortably above the 90th percentile of
-the model's own non-broken output (~$105–270/sqft citywide, depending on
-exactly where you slice it) and just as comfortably below the $7,107/sqft
-cluster — there's a clean, empty gap in the data between roughly $270 and
-$7,000/sqft, so the exact cap value isn't sensitive within that range. This
-capped 2,702 of ~27,000 vacant parcels citywide and removed **$115B** in
-phantom valuation, dropping the citywide headline totals roughly 7-8x (from
-~$301M to ~$39M property tax uplift; ~$258M to ~$38M annual sales tax) —
-a large swing, but in the direction of *removing* a fabrication, not
-introducing one. `est_market_value_uncapped` is preserved in
-`parcel_revenue_estimates.csv` for anyone who wants to audit exactly which
-parcels were capped and by how much.
+`LOT_SIZE_AREA` (falling back to 100× `VAL_ASSD` for parcels missing lot
+size). This caps 1,154 of 5,862 vacant parcels within city limits and
+removes **$7.9B** in phantom valuation from that subset -- a large swing,
+but in the direction of *removing* a fabrication, not introducing one.
+`est_market_value_uncapped` is preserved in `parcel_revenue_estimates.csv`
+for anyone who wants to audit exactly which parcels were capped and by how
+much.
 
 **Marsh/drainage parcels get a tighter cap.** $500/sqft assumes buildable
 urban land, which "WASTE LAND, MARSH, SWAMP, SUBMERGED-VACANT LAND"
@@ -194,8 +228,8 @@ current Sacramento city council districts). This module is scoped to the
 district polygons — unincorporated county land, or another incorporated city
 in the countywide vacant-parcel set (Elk Grove, Folsom, Citrus Heights,
 Rancho Cordova, Galt) — is outside city limits and is dropped before any
-totals are computed, not carried through and footnoted. Of the 24,077
-countywide vacant parcels, 6,518 (27%) are within city limits and make up
+totals are computed, not carried through and footnoted. Of the 19,369
+countywide vacant parcels, 5,862 (30%) are within city limits and make up
 this module's entire output.
 
 ## Known limitations
