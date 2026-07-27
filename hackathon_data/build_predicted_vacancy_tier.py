@@ -21,22 +21,31 @@ pyQGIS map suite; this script is what makes it visible everywhere else
 appending it to vacant_parcels_qc.csv as its own tier.
 
 This is a noisier signal than the coded tiers -- predict_vacancy.py's own
-precision proxy is ~11% (most high-scoring parcels are false positives, e.g.
-a weeds complaint on an occupied business) -- so it's kept as a distinct,
-filterable vacancy_tier value with its underlying vac_score carried through,
-not silently blended into "confirmed" categories.
+precision proxy is ~11%, but that number is a self-referential sanity check
+(what share of ALL high-scoring parcels, known-vacant plus new candidates
+combined, are already coded vacant), not an external validation of the new
+candidates specifically -- it can't distinguish "the model found real hidden
+vacancies" from "the model has a high false-positive rate," since adding
+more candidates mechanically pulls it down either way. There is no
+ground-truth occupancy dataset (e.g. a field survey of current tenancy)
+available to validate individual candidates against. So Tier 4 is kept as a
+distinct, filterable vacancy_tier value with its underlying vac_score
+carried through, not silently blended into "confirmed" categories, and
+nothing here claims a validated precision rate for it.
 
-That ~11% precision proxy undersold it: before this script applied
-qc_vacancy_exclusions.py's own use-code allowlist to candidates before
-appending them, 98.7% of Tier 4 rows (6,846 of 6,939) had a use code
-implying a real, occupied structure -- department stores, high-rise
-apartments, offices, a theater -- because large, busy, occupied buildings
-generate plenty of 311 calls for reasons that have nothing to do with
-vacancy. This one gap accounted for 77.5% of the citywide sales-tax
-estimate and 53.2% of the property-tax uplift estimate downstream. The
-allowlist is the same check the coded tiers already get in
-qc_vacancy_exclusions.py, applied here to candidates before they're
-appended, not after.
+What this script DOES filter is scope, not accuracy: the campaign's target
+is vacant commercial/industrial buildings and vacant land, not empty
+residential dwellings (an empty single-family home or apartment unit isn't
+what a vacant-*building* enforcement program is about, regardless of
+whether the 311 signal is real). RESIDENTIAL_DWELLING_USE_CODES below drops
+candidates whose use code is a residential dwelling type, reviewed against
+the full distinct list of what's actually in the data (see module's git
+history / the exclusion report this writes). An earlier version of this
+script instead applied qc_vacancy_exclusions.py's vacant-*land* allowlist
+here, which was wrong: it flagged ~99% of candidates as "miscoded" for
+having a building on them at all, which is true of every Tier 4 row by
+design (Tier 4 exists to find vacant buildings, not vacant land) and says
+nothing about whether the building is residential vs. commercial/industrial.
 
 Usage:
     python hackathon_data/build_predicted_vacancy_tier.py
@@ -48,9 +57,9 @@ Inputs:
     ../maps/data/predicted_vacancies.gpkg  (run 311_heatmap/predict_vacancy.py first)
 
 Outputs (overwritten in place):
-    vacant_parcels_qc.csv       -- + rows tagged vacancy_tier="Tier 4: Predicted (311 Signal)"
-    vacant_parcels_qc.geojson   -- same, if the geojson input was present
-    tier4_allowlist_report.csv  -- candidates dropped by the use-code allowlist, for review
+    vacant_parcels_qc.csv           -- + rows tagged vacancy_tier="Tier 4: Predicted (311 Signal)"
+    vacant_parcels_qc.geojson       -- same, if the geojson input was present
+    tier4_residential_exclusions.csv -- candidates dropped as residential dwellings, for review
 """
 
 from __future__ import annotations
@@ -60,8 +69,6 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 
-from qc_vacancy_exclusions import VACANT_LAND_USE_CODES
-
 HACK_DIR = Path(__file__).resolve().parent
 REPO_ROOT = HACK_DIR.parent
 
@@ -69,9 +76,41 @@ VACANT_CSV = HACK_DIR / "vacant_parcels_qc.csv"
 VACANT_GEOJSON = HACK_DIR / "vacant_parcels_qc.geojson"
 PARCELS_TRIMMED_CSV = HACK_DIR / "parcels_trimmed.csv"
 PREDICTED_GPKG = REPO_ROOT / "maps" / "data" / "predicted_vacancies.gpkg"
-ALLOWLIST_REPORT_CSV = HACK_DIR / "tier4_allowlist_report.csv"
+RESIDENTIAL_REPORT_CSV = HACK_DIR / "tier4_residential_exclusions.csv"
 
 TIER_LABEL = "Tier 4: Predicted (311 Signal)"
+
+# Residential dwelling use codes -- excluded from Tier 4 because an empty
+# home/unit isn't the target of a vacant-*building* enforcement program,
+# unlike an empty storefront or office floor. Reviewed against the full
+# distinct USE_CODE_STD_DESC_LPS list among candidates in
+# maps/data/predicted_vacancies.gpkg (100 distinct values as of 2026-07-26).
+# Deliberately does NOT match on the substring "RESIDENTIAL" or "CONDOMINIUM"
+# alone: "COMMERCIAL/OFFICE/RESIDENTIAL (MIXED USE)" (ground-floor commercial
+# in a mixed building -- exactly the kind of vacancy this program cares
+# about) and "CONDOMINIUM (INDUSTRIAL)"/"CONDOMINIUM OFFICES" (condo-owned
+# flex/office space, not housing) are deliberately kept.
+RESIDENTIAL_DWELLING_USE_CODES = {
+    "SINGLE FAMILY RESIDENTIAL",
+    "SINGLE FAMILY RESIDENTIAL (ASSUMED)",
+    "CONDOMINIUM UNIT (RESIDENTIAL)",
+    "MOBILE/MANUFACTURED HOME (REGARDLESS OF LAND OWNERSHIP)",
+    "MOBILE HOME PARK, TRAILER PARK",
+    "DUPLEX (2 UNITS, ANY COMBINATION)",
+    "TRIPLEX (3 UNITS, ANY COMBINATION)",
+    "QUADRUPLEX (4 UNITS, ANY COMBINATION)",
+    "APARTMENT HOUSE (5+ UNITS)",
+    "APARTMENT HOUSE (100+ UNITS)",
+    "APARTMENTS (GENERIC)",
+    "GARDEN APT, COURT APT (5+ UNITS)",
+    "HIGHRISE APARTMENTS",
+    "PLANNED UNIT DEVELOPMENT (PUD) (RESIDENTIAL)",
+    "RURAL/AGRICULTURAL RESIDENCE",
+    "RESIDENTIAL COMMON AREA (CONDO/PUD/ETC.)",
+    "ROW HOUSE (RESIDENTIAL)",
+    "TOWNHOUSE (RESIDENTIAL)",
+    "RESIDENTIAL INCOME (GENERAL) (MULTI-FAMILY)",
+}
 
 # Slimmer schema carried by the geojson (see qc_vacancy_exclusions.py) --
 # matched here so the appended rows have the same columns as the existing ones.
@@ -129,19 +168,19 @@ def main() -> None:
     print(f"matched {len(new_rows):,}/{len(candidates):,} candidates to a "
           f"{PARCELS_TRIMMED_CSV.name} row")
 
-    # Same allowlist qc_vacancy_exclusions.py applies to the coded tiers --
-    # see module docstring. Applied here, before appending, since these rows
-    # never pass through classify() there (they don't exist yet when that
-    # script runs).
-    n_before_allowlist = len(new_rows)
-    fails_allowlist = ~new_rows["USE_CODE_STD_DESC_LPS"].isin(VACANT_LAND_USE_CODES)
-    dropped = new_rows[fails_allowlist]
-    new_rows = new_rows[~fails_allowlist]
-    print(f"  {n_before_allowlist - len(new_rows):,}/{n_before_allowlist:,} candidates "
-          f"dropped by the vacant-land-use-code allowlist (use code implies an "
-          f"occupied structure, not vacant land)")
-    dropped.to_csv(ALLOWLIST_REPORT_CSV, index=False)
-    print(f"  wrote {ALLOWLIST_REPORT_CSV.name} ({len(dropped):,} rows, for review)")
+    # Drop residential dwellings -- see module docstring and
+    # RESIDENTIAL_DWELLING_USE_CODES above. Applied here, before appending,
+    # since these rows never pass through qc_vacancy_exclusions.py's
+    # classify() (they don't exist yet when that script runs).
+    n_before_filter = len(new_rows)
+    is_residential = new_rows["USE_CODE_STD_DESC_LPS"].isin(RESIDENTIAL_DWELLING_USE_CODES)
+    dropped = new_rows[is_residential]
+    new_rows = new_rows[~is_residential]
+    print(f"  {n_before_filter - len(new_rows):,}/{n_before_filter:,} candidates "
+          f"dropped as residential dwellings (not the target of a vacant-"
+          f"building program)")
+    dropped.to_csv(RESIDENTIAL_REPORT_CSV, index=False)
+    print(f"  wrote {RESIDENTIAL_REPORT_CSV.name} ({len(dropped):,} rows, for review)")
 
     score_by_apn = dict(zip(candidates["PARCEL_APN"], candidates["vac_score"]))
     new_rows["vacancy_tier"] = TIER_LABEL

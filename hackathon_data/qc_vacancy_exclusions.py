@@ -10,7 +10,7 @@ a non-vacant (or non-vacancy-tax-eligible) parcel slips into vacant_parcels.csv:
    improvement value and reads identically to a vacant lot to the
    zero-improvement heuristic.
 
-2. Tier 2/3/4 rows whose OWN use code says a structure/active use exists.
+2. Tier 2/3 rows whose OWN use code says a structure/active use exists.
    VAL_ASSD_IMPRV is *null* -- not recorded as literally $0 -- for every
    single Tier 2 row: the classification treats missing improvement-value
    data as zero, county-wide, for every use type. Of the ~91 distinct use
@@ -25,24 +25,22 @@ a non-vacant (or non-vacancy-tax-eligible) parcel slips into vacant_parcels.csv:
    fields captured at all -- see git history for that narrower, superseded
    version of this check). The robust fix is the other direction: keep an
    explicit allowlist of use codes that actually mean "no structure" --
-   VACANT_LAND_USE_CODES below -- and treat everything else in Tier 2/3/4 as
+   VACANT_LAND_USE_CODES below -- and treat everything else in Tier 2/3 as
    miscoded. Tier 1 (land-use-code based, not improvement-value based)
    doesn't have this problem and isn't touched by this specific check: only
    2 of 19,295 Tier 1 parcels show any structural evidence in the first
    place (Tier 1 gets its own, different staleness check -- #4 below).
 
-   Tier 4 ("Predicted (311 Signal)") was added to this list after this
-   check was originally written and is a materially different kind of
-   classification -- a model prediction correlating 311 call volume with
-   likely vacancy, not a hard fact about the parcel -- so it needs this
-   scrutiny even more than a rule-based tier, not less. Before Tier 4 was
-   added here, 6,846 of 6,939 Tier 4 rows (98.7%) had a use code implying a
-   real, occupied structure (department stores, high-rise apartments,
-   offices, a theater...), evidently because large, busy, occupied
-   buildings generate plenty of 311 calls for reasons that have nothing to
-   do with vacancy. Left in, this one gap accounted for 77.5% of the
-   citywide sales-tax estimate and 53.2% of the property-tax uplift
-   estimate -- the dominant source of error in the whole pipeline.
+   This allowlist is specifically about whether a *structure exists at
+   all* -- it does NOT apply to Tier 4, which is the opposite kind of
+   claim (a structure exists AND it's vacant). See
+   build_predicted_vacancy_tier.py for how Tier 4 candidates are actually
+   filtered -- an earlier version of this codebase applied this same
+   land-use allowlist to Tier 4 too, which was wrong: it flagged ~99% of
+   Tier 4 as "miscoded" for having a real building on it, which is true of
+   every Tier 4 row *by design* (Tier 4 exists to find vacant buildings,
+   not vacant land) and says nothing about whether the building is
+   actually vacant.
 
 3. Parking lots, in every tier. Not vacant land -- an operating surface lot
    is paved, in-use commercial property -- and per the campaign's own call,
@@ -127,24 +125,21 @@ def is_public_park_owner(owner_name) -> bool:
     return bool(_STATE_AGENCY_PATTERN.search(o))
 
 
-# ── Check 2: Tier 2/3/4 rows whose use code isn't actually "vacant land" ────
-# Only applied to Tier 2/3/4 -- Tier 1 (land-use-code based) is already clean
+# ── Check 2: Tier 2/3 rows whose use code isn't actually "vacant land" ──────
+# Only applied to Tier 2/3 -- Tier 1 (land-use-code based) is already clean
 # by this measure (it gets its own staleness check, #4 below, instead). This
-# is an ALLOWLIST, not a blocklist: anything in Tier 2/3/4 whose use code
+# is an ALLOWLIST, not a blocklist: anything in Tier 2/3 whose use code
 # isn't one of these is treated as miscoded, on the theory that "vacant" use
 # codes are a short, enumerable list and "not vacant" use codes are not (see
 # module docstring). Reviewed against the full distinct list of what's
 # actually in the data -- see qc_exclusion_report.csv after running this.
 #
-# Tier 4 ("Predicted (311 Signal)") is included here even though it wasn't
-# when this check was first written -- it's a model prediction, not a rule
-# based on the county's own records, so if anything it deserves *more*
-# scrutiny against the same allowlist, not an exemption. See module
-# docstring for the scale of what this catches (98.7% of Tier 4).
+# Does NOT apply to Tier 4 -- that's a different kind of claim (a structure
+# exists AND it's vacant, not "no structure exists"), so this land-use
+# allowlist is the wrong test for it. See build_predicted_vacancy_tier.py.
 STRUCTURAL_EVIDENCE_TIERS = {
     "Tier 2: Zero Improvement",
     "Tier 3: Parking/Abandoned",
-    "Tier 4: Predicted (311 Signal)",
 }
 
 VACANT_LAND_USE_CODES = {

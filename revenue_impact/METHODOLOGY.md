@@ -56,20 +56,29 @@ them before -- which surfaced two pre-existing gaps in
 contributing $0 to every total until parcels actually had a dollar value to
 contribute:
 
-- **Tier 4 ("Predicted (311 Signal)") never went through the use-code
-  allowlist.** Tier 4 rows are appended to `vacant_parcels_qc.csv` by
-  `build_predicted_vacancy_tier.py` *after* `qc_vacancy_exclusions.py`
-  runs, so they never passed through that script's existing
-  miscoded-use-code check at all, despite being a noisier, model-predicted
-  signal that arguably needs *more* scrutiny than the coded tiers, not
-  less. Of 7,083 Tier 4 candidates, 7,075 (99.9%) had a use code implying a
-  real, occupied structure -- department stores, high-rise apartments,
-  offices, a theater -- because large, busy, occupied buildings generate
-  plenty of 311 calls for reasons that have nothing to do with vacancy.
-  This one gap accounted for 77.5% of the citywide sales-tax estimate and
-  53.2% of the property-tax uplift estimate in an intermediate run. Fixed
-  by applying the same allowlist `qc_vacancy_exclusions.py` already trusts
-  for Tier 2/3, inside `build_predicted_vacancy_tier.py`, before appending.
+- **Tier 4 ("Predicted (311 Signal)") was including empty residential
+  dwellings, which aren't this program's target.** This campaign is about
+  vacant commercial/industrial *buildings* and vacant *land* (any zoning) --
+  not an empty single-family home or apartment unit. Tier 4 rows are
+  appended to `vacant_parcels_qc.csv` by `build_predicted_vacancy_tier.py`
+  with no scope check on what kind of property the 311 signal is flagging,
+  and thousands of the candidates were ordinary residential dwellings
+  (2,623 single-family homes alone). Fixed by excluding candidates whose
+  use code is a residential dwelling type
+  (`RESIDENTIAL_DWELLING_USE_CODES` in `build_predicted_vacancy_tier.py`),
+  dropping 3,990 of 7,083 candidates (56%).
+
+  An earlier version of this fix used the wrong test: it applied
+  `qc_vacancy_exclusions.py`'s vacant-*land* allowlist to Tier 4, which
+  flagged 7,075 of 7,083 candidates (99.9%) as "miscoded" simply for having
+  a building on them at all -- true of nearly every Tier 4 row *by design*
+  (Tier 4 exists specifically to find vacant buildings, not vacant land)
+  and unrelated to whether that building is a home or a commercial
+  property. That version briefly shipped in this repo's history with an
+  incorrect claim that it represented a false-positive rate; it did not --
+  it measured "does this parcel have a structure," not "is this parcel
+  actually vacant" or "is this parcel residential." Corrected here.
+
 - **Tier 1 ("Coded Vacant") wasn't stale-checked.** Tier 1 trusts the
   county's LANDUSE code as of whenever `vacant_parcels.csv` was last built,
   and Sacramento is an actively growing county. Cross-checking every Tier 1
@@ -77,35 +86,51 @@ contribute:
   assessors.gpkg` found 4,716 of 19,295 (24%) no longer start with `I`
   (vacant) -- 4,661 of those now show `LU_GENERAL` "Residential", the
   fingerprint of a lot that's since been subdivided and built into homes.
-  Smaller impact than the Tier 4 fix ($2.99M of citywide sales tax, $623K
-  of property-tax uplift, pre-fix) but a real, verified staleness gap.
-  Fixed with a new check 4 in `qc_vacancy_exclusions.py`.
+  Fixed with a new check 4 in `qc_vacancy_exclusions.py`. (This check is
+  about vacant *land* going stale, unrelated to the residential-dwelling
+  issue above -- vacant land zoned residential still counts as vacant
+  land regardless of zoning; it's occupied residential *buildings* that
+  are out of scope.)
+
+**Important caveat carried forward, not resolved:** there is no
+ground-truth occupancy dataset (e.g. a field survey of current tenancy)
+to validate Tier 4 predictions against, and `predict_vacancy.py`'s own
+"~11% precision proxy" is a self-referential sanity check against the
+already-known-vacant set, not an external validation of new candidates --
+see that script's docstring. Tier 4 now correctly excludes residential
+dwellings, but that says nothing about whether any given flagged
+commercial/industrial building is *actually* vacant today. Because Tier 4
+candidates skew toward large buildings (offices, department stores,
+theaters, hotels), it's currently the dominant contributor to the citywide
+totals below despite being the least-validated tier -- see Known
+Limitations.
 
 ### Current totals
 
-19,369 countywide vacant parcels (19,368 matched a market-value estimate),
-5,862 within Sacramento city limits, 1,154 of those capped by
-`cap_market_value()` (removing $7.9B in phantom valuation from the city
-subset). Citywide headline totals: **$39.2M** potential property tax
-uplift, **$71.0M** annual sales tax across all jurisdictions, **$16.2M** of
-that as the city's own share. District 3: 478 vacant parcels, $1.7M
-potential uplift, $3.8M annual sales tax total / $857K city share.
+22,454 countywide vacant parcels (22,053 matched a market-value estimate),
+8,853 within Sacramento city limits, 5,786 of those capped by
+`cap_market_value()` (removing $115.8B in phantom valuation from the city
+subset). Citywide headline totals: **$70.0M** potential property tax
+uplift, **$295.7M** annual sales tax across all jurisdictions, **$67.6M**
+of that as the city's own share. District 3: 654 vacant parcels, $2.6M
+potential uplift, $13.6M annual sales tax total / $3.1M city share.
 
 ## Sanity cap on est_market_value (applied before everything below)
 
 `ca_property_estimator`'s land-value model produces a small but consequential
 share of wildly implausible estimates -- a broken fallback/default constant
 firing inside the model for parcels it can't otherwise price cleanly. Left
-uncapped, these dominate every downstream total: pre-cap, the single
-largest parcel in the current city-limited run (a ~1-acre
-"INDUSTRIAL-VACANT LAND" lot assessed at $148,960) prices out to
-**$176.7 million**, a ~$4,088/sqft rate against a citywide median closer to
-$100/sqft.
+uncapped, these dominate every downstream total: pre-cap, the largest
+parcels in the current city-limited run hit a suspiciously round
+**$500 million** ceiling (a "MULTI-TENANT INDUSTRIAL BLDG." assessed at
+$1.48M and a "DISTRIBUTION WAREHOUSE" assessed at $884K both price out to
+exactly $500M uncapped -- almost certainly the model's own internal clamp,
+not two coincidentally-identical market values).
 
 `cap_market_value()` winsorizes `est_market_value` at **$500/sqft** of
 `LOT_SIZE_AREA` (falling back to 100× `VAL_ASSD` for parcels missing lot
-size). This caps 1,154 of 5,862 vacant parcels within city limits and
-removes **$7.9B** in phantom valuation from that subset -- a large swing,
+size). This caps 5,786 of 8,853 vacant parcels within city limits and
+removes **$115.8B** in phantom valuation from that subset -- a large swing,
 but in the direction of *removing* a fabrication, not introducing one.
 `est_market_value_uncapped` is preserved in `parcel_revenue_estimates.csv`
 for anyone who wants to audit exactly which parcels were capped and by how
@@ -228,8 +253,8 @@ current Sacramento city council districts). This module is scoped to the
 district polygons — unincorporated county land, or another incorporated city
 in the countywide vacant-parcel set (Elk Grove, Folsom, Citrus Heights,
 Rancho Cordova, Galt) — is outside city limits and is dropped before any
-totals are computed, not carried through and footnoted. Of the 19,369
-countywide vacant parcels, 5,862 (30%) are within city limits and make up
+totals are computed, not carried through and footnoted. Of the 22,454
+countywide vacant parcels, 8,853 (39%) are within city limits and make up
 this module's entire output.
 
 ## Known limitations
@@ -248,3 +273,26 @@ this module's entire output.
   `USE_CODE_STD_DESC_LPS`, not a legal zoning determination — parcels with
   ambiguous or missing use codes fall out of the sales-tax estimate even if
   a real project would qualify.
+- **Tier 4 ("Predicted (311 Signal)") is unvalidated and currently the
+  dominant contributor to the citywide totals.** There's no ground-truth
+  occupancy dataset available to confirm any individual Tier 4 building is
+  actually vacant today — see `build_predicted_vacancy_tier.py`'s
+  docstring. Tier 4 correctly excludes residential dwellings (this program
+  targets vacant buildings and land, not empty homes), but that's a scope
+  filter, not an accuracy filter. If you need a citywide number you can
+  defend parcel-by-parcel, filter `parcel_revenue_estimates.csv` to
+  `vacancy_tier != "Tier 4: Predicted (311 Signal)"` first — Tiers 1-3 are
+  based on the assessor's own recorded land use or improvement value, not
+  a model prediction.
+- **The $500/sqft sanity cap was calibrated against vacant *land* pricing,
+  before Tier 4 added real buildings to the mix.** It divides by
+  `LOT_SIZE_AREA` (ground footprint), not total floor area — a multi-story
+  building can legitimately be worth far more than $500 per square foot of
+  the *lot* it sits on, so this cap may be too aggressive for tall/dense
+  commercial buildings and too permissive for single-story ones. It caught
+  5,786 of 8,853 city-limited vacant parcels in the current run (up from a
+  few hundred before Tier 4 existed) and removed $115.8B in phantom
+  valuation — the cap is doing much more work than it was designed for.
+  Worth a dedicated pass to calibrate a separate, building-appropriate cap
+  (e.g. against improvement value or a $/building-sqft basis) rather than
+  reusing the land cap unchanged.
